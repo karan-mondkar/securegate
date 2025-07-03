@@ -6,7 +6,10 @@ from tkinter import messagebox
 import time
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
+import json
 
+
+import random
 validate_user=False
 current_page = 0
 rows_per_page = 15
@@ -150,10 +153,55 @@ def fetch_settings_data():
     return result
 
 
+def jsonins(tp,data,data2):
+    t=db()
+    conn=t[0]
+    cursor=t[1]
+    if tp=="port":
+
+
+        query = "SELECT allowed_ports FROM settings  "
+        cursor.execute(query)
+        result = cursor.fetchone()
+        json_data = result[0]  # This is a JSON string
+        port_dict = json.loads(json_data)  # Convert to Python dictionary
+        port_dict[data]=data2        
+        json_data = json.dumps(port_dict)
+
+        query = "UPDATE settings SET allowed_ports = %s"
+        cursor.execute(query, (json_data,))
+        conn.commit()
+
+    elif tp == "honeypot":
+            query = "SELECT honeypot_ips FROM settings"
+            cursor.execute(query)
+            result = cursor.fetchone()
+            if result:
+                json_data = result[0]
+                honeypot_dict = json.loads(json_data)
+                honeypot_dict[data] = data2  # data = IP, data2 = info/status
+                updated_json = json.dumps(honeypot_dict)
+                cursor.execute("UPDATE settings SET honeypot_ips = %s", (updated_json,))
+                conn.commit()
+                
+    elif tp == "rqpt":
+            query = "SELECT request_limit_per_time FROM settings"
+            cursor.execute(query)
+            result = cursor.fetchone()
+            
+            json_data = result[0]
+            honeypot_dict = json.loads(json_data)
+            honeypot_dict[data] = data2  # data = IP, data2 = info/status
+            updated_json = json.dumps(honeypot_dict)
+            cursor.execute("UPDATE settings SET honeypot_ips = %s", (updated_json,))
+            conn.commit()
+                
+
+
 
 def settingshow(setnum):
     global admin_user, email, admin_pass,phone,max_requests_per_ip, time_limit, honeypot_ips, folder_path, allowed_ports, port_services
-    global interval_var, request_limit_var
+    global interval_var, request_limit_var ,port,service
 
 
     '''
@@ -177,7 +225,7 @@ def settingshow(setnum):
         admin_pass = tk.Entry(content_frame, show="*")
         admin_pass.pack(pady=5)
 
-        tk.Button(content_frame, text="Confirm Settings", command=lambda: update_settings("sign in"), bg="green", fg="white").pack(pady=15)
+        tk.Button(content_frame, text="Confirm Settings", command=lambda: update_setting("sign in"), bg="green", fg="white").pack(pady=15)
     if setnum==2:
         database=db()
         connection=database[0]
@@ -200,74 +248,98 @@ def settingshow(setnum):
 
 
     if setnum == 3:
-        result=fetch_settings_data()
-        # Fetch previous values safely
-        prev_phone = result[0] 
-        prev_time_limit = result[1] 
-        prev_max_requests = result[2] 
-        prev_honeypots = result[3]
-        prev_sensative_folder=result[4]
-        # --- Admin Phone ---
-        tk.Label(content_frame, text="Admin Mobile Number").pack(pady=5)
-        phone = tk.Entry(content_frame)
-        phone.pack(pady=5)
+            result = fetch_settings_data()
 
-        tk.Button(content_frame, text="Submit", command=lambda: update_setting("phone")).pack()
+            # Fetch previous values safely
+            prev_phone = result[0] 
+            prev_time_limit = result[1] 
+            prev_max_requests = result[2] 
+            prev_honeypots = result[3]
+            prev_sensative_folder = result[4]
 
-        # --- Request Time Limit ---
-        tk.Label(content_frame, text="Request Time Limit (in minutes)").pack(pady=5)
-        time_limit = tk.Entry(content_frame)
-        time_limit.pack(pady=5)
-        tk.Button(content_frame, text="Submit", command=lambda: update_setting("request_time_limit")).pack()
+            # Grid layout row tracker
+            row = 0
 
-        # --- Max Requests Per IP ---
-        tk.Label(content_frame, text="Max Requests Per IP (per hour)").pack(pady=5)
-        max_requests_per_ip = tk.Entry(content_frame)
-        max_requests_per_ip.pack(pady=5)
-        tk.Button(content_frame, text="Submit", command=lambda: update_setting("max_requests_per_ip")).pack()
+            # --- Admin Phone ---
+            tk.Label(content_frame, text="Admin Mobile Number").grid(row=row, column=0, padx=5, pady=5, sticky='w')
+            phone = tk.Entry(content_frame)
+            phone.grid(row=row, column=1, padx=5, pady=5)
+            phone.insert(0, prev_phone)
+            tk.Button(content_frame, text="Submit", command=lambda: update_setting("phone")).grid(row=row, column=2, padx=5, pady=5)
+            row += 1
 
-        # --- Honeypot IPs ---
-        tk.Label(content_frame, text="Honeypot IPs (comma-separated)").pack(pady=5)
-        honeypot_ips = tk.Entry(content_frame)
-        honeypot_ips.pack(pady=5)
-        tk.Button(content_frame, text="Submit", command=lambda: update_setting("honeypot_ips")).pack()
+            # --- Request Time Limit ---
+            tk.Label(content_frame, text="Request Time Limit (in minutes)").grid(row=row, column=0, padx=5, pady=5, sticky='w')
+            time_limit = tk.Entry(content_frame)
+            time_limit.grid(row=row, column=1, padx=5, pady=5)
+            time_limit.insert(0, prev_time_limit)
+            tk.Button(content_frame, text="Submit", command=lambda: update_setting("request_time_limit")).grid(row=row, column=2, padx=5, pady=5)
+            row += 1
+            
+            # --- Max Requests Per IP ---
+            tk.Label(content_frame, text="Max Requests Per IP (per hour)").grid(row=row, column=0, padx=5, pady=5, sticky='w')
+            max_requests_per_ip = tk.Entry(content_frame)
+            max_requests_per_ip.grid(row=row, column=1, padx=5, pady=5)
+            max_requests_per_ip.insert(0, prev_max_requests)
+            
+            tk.Button(content_frame, text="Submit", command=lambda: update_setting("max_requests_per_ip_per_time")).grid(row=row, column=2, padx=5, pady=5)
+            row += 1
 
-        # --- Folder Path ---
-        tk.Label(content_frame, text="Encrypted Folder Path(s)").pack(pady=5)
-        folder_path = tk.Entry(content_frame)
-        folder_path.pack(pady=5)
-        tk.Button(content_frame, text="Submit", command=lambda: update_setting("sensitive_folders")).pack()
-'''
-        # --- Allowed Ports ---
-        tk.Label(content_frame, text="Allowed Ports (JSON format)").pack(pady=5)
-        allowed_ports = tk.Entry(content_frame)
-        allowed_ports.pack(pady=5)
-        tk.Button(content_frame, text="Submit", command=lambda: update_setting("allowed_ports", allowed_ports.get())).pack()
 
-        # --- Port Services ---
-        tk.Label(content_frame, text="Port Services (JSON format)").pack(pady=5)
-        port_services = tk.Entry(content_frame)
-        port_services.pack(pady=5)
-        tk.Button(content_frame, text="Submit", command=lambda: update_setting("allowed_ports", port_services.get())).pack()
+            # --- Honeypot IPs ---
+            tk.Label(content_frame, text="Honeypot IPs (comma-separated)").grid(row=row, column=0, padx=5, pady=5, sticky='w')
+            honeypot_ips = tk.Entry(content_frame)
+            honeypot_ips.grid(row=row, column=1, padx=5, pady=5)
+            honeypot_ips.insert(0, str(prev_honeypots))
+            
+            tk.Button(content_frame, text="Submit", command=lambda: update_setting("honeypot_ips")).grid(row=row, column=2, padx=5, pady=5)
+            row += 1
 
-        # --- Time Interval ---
-        tk.Label(content_frame, text="Select Time Interval (minutes):").pack(pady=5)
-        global interval_var
-        interval_var = tk.StringVar()
-        interval_options = [1, 2, 3, 4, 5, 10, 30, 60, 120]
-        interval_menu = ttk.Combobox(content_frame, textvariable=interval_var, values=interval_options)
-        interval_menu.pack()
-        tk.Button(content_frame, text="Insert", command=lambda: update_setting("request_time_limit", interval_var.get())).pack()
+            # --- Folder Path ---
+            tk.Label(content_frame, text="Encrypted Folder Path(s)").grid(row=row, column=0, padx=5, pady=5, sticky='w')
+            folder_path = tk.Entry(content_frame)
+            folder_path.grid(row=row, column=1, padx=5, pady=5)
+            folder_path.insert(0, str(prev_sensative_folder))
+            tk.Button(content_frame, text="Submit", command=lambda: update_setting("sensitive_folders")).grid(row=row, column=2, padx=5, pady=5)
+            row += 1
 
-        # --- IP Request Limit ---
-        tk.Label(content_frame, text="Set IP Request Limit (per hour):").pack(pady=5)
-        global request_limit_var
-        request_limit_var = tk.StringVar()
-        request_limit_options = [10, 20, 30, 40, 50, 100, 300, 600, 1000, 1400, 2000]
-        limit_menu = ttk.Combobox(content_frame, textvariable=request_limit_var, values=request_limit_options)
-        limit_menu.pack()
-        tk.Button(content_frame, text="Insert", command=lambda: update_setting("max_requests_per_ip", request_limit_var.get())).pack()
-'''
+            # --- Allowed Ports ---
+            tk.Label(content_frame, text="Allowed Ports (JSON format)").grid(row=row, column=0, padx=5, pady=5, sticky='w')
+            allowed_ports = tk.Entry(content_frame)
+            allowed_ports.grid(row=row, column=1, padx=5, pady=5)
+            tk.Button(content_frame, text="Submit", command=lambda: update_setting("allowed_ports")).grid(row=row, column=2, padx=5, pady=5)
+            row += 1
+
+            # --- Port Service ---
+            tk.Label(content_frame, text="Port").grid(row=row, column=0, padx=5, pady=5, sticky='w')
+            port = tk.Entry(content_frame)
+            port.grid(row=row, column=1, padx=5, pady=5)
+            row += 1
+
+            tk.Label(content_frame, text="Service").grid(row=row, column=0, padx=5, pady=5, sticky='w')
+            service = tk.Entry(content_frame)
+            service.grid(row=row, column=1, padx=5, pady=5)
+            tk.Button(content_frame, text="Submit", command=lambda: update_setting("port_info")).grid(row=row, column=3, padx=5, pady=5)
+
+
+            row += 1
+
+            # --- Time Interval ---
+            tk.Label(content_frame, text="Select Time Interval (minutes):").grid(row=row, column=0, padx=5, pady=5, sticky='w')
+            interval_var = tk.StringVar()
+            interval_options = [1, 2, 3, 4, 5, 10, 30, 60, 120]
+            interval_menu = ttk.Combobox(content_frame, textvariable=interval_var, values=interval_options)
+            interval_menu.grid(row=row, column=1, padx=5, pady=5)
+            row += 1
+            # --- IP Request Limit ---
+            tk.Label(content_frame, text="Set IP Request Limit (per hour):").grid(row=row, column=0, padx=5, pady=5, sticky='w')
+            request_limit_var = tk.StringVar()
+            request_limit_options = [10, 20, 30, 40, 50, 100, 300, 600, 1000, 1400, 2000]
+            limit_menu = ttk.Combobox(content_frame, textvariable=request_limit_var, values=request_limit_options)
+            limit_menu.grid(row=row, column=1, padx=5, pady=5)
+            tk.Button(content_frame, text="Insert", command=lambda: update_setting("max_requests_per_ip")).grid(row=row, column=2, padx=5, pady=5)
+
+
 
 
 
@@ -275,7 +347,7 @@ def settingshow(setnum):
 
 def update_setting(val):
     global admin_user, email, admin_pass,phone, time_limit, honeypot_ips, folder_path, allowed_ports, port_services
-    global interval_var, request_limit_var
+    global interval_var, request_limit_var,port,service
     dt=db()
     connection=dt[0]
     cursor=dt[1]
@@ -298,7 +370,9 @@ def update_setting(val):
             cursor.execute(query, (phone.get(),))
             connection.commit()
 
-    
+    if val=="port_info":
+            jsonins("port",port.get(),service.get())
+
     if val=="request_time_limit":
             query = """ UPDATE Settings SET request_time_limit = %s  """
             cursor.execute(query, (time_limit.get(),))
@@ -306,17 +380,24 @@ def update_setting(val):
     if val=="max_requests_per_ip":
             query = """ UPDATE Settings SET max_requests_per_ip = %s  """
             cursor.execute(query, (max_requests_per_ip.get(),))
-            connection.commit()    
+            connection.commit() 
+
+
+    if val=="max_requests_per_ip_per_time":
+            jsonins("rqpt",interval_var,request_limit_var)
+
     if val=="honeypot_ips":
-            query = """UPDATE Settings SET honeypot_ips = %s """
-            cursor.execute(query, (honeypot_ips.get(),))
-            connection.commit()
+            jsonins("honeypot",random.random,honeypot_ips.get())
     
     if val=="upload_folders":
             query = """ UPDATE Settings SET upload_folders = %s """
             cursor.execute(query, (folder_path.get(),))
             connection.commit()
-
+    if val=="allowed_port":
+        
+        query = """ UPDATE Settings SET allowed_ip = %s """
+        cursor.execute(query, (allowed_ports.get(),))
+        connection.commit()
 
 def dashboardshow():
     
