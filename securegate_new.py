@@ -3,17 +3,26 @@ import subprocess #block unblock fun sathi
 import socket # internet connection
 import requests #country find
 
-
+import json
 import time 
 from datetime import datetime,timedelta
-import psutil #request intercept
-from collections import deque   #for temporory stores teh request
+
+
+
+from scapy.all import sniff, IP, TCP, UDP, ICMP, Ether, Raw
+from datetime import datetime
+import os
+
 
 import queue
-request_queue = queue.Queue()
-temp_queue=deque(maxlen=50) 
+request_queue=queue.Queue(maxsize=50000)
+
+
+
+
+
 class SYS_INFO:
-    global request_queue
+    global request,data
     def __init__(self, ips,request,iprequest,connection,cursor):
         self.ips=ips
         self.request=request
@@ -47,7 +56,7 @@ class SYS_INFO:
         #request_type table
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS request_type (
-            port_number INT PRIMARY KEY,
+            port_number VARCHAR(50) PRIMARY KEY,
             port_name VARCHAR(50),
             request_count INT DEFAULT 1,               
             request_time DATETIME
@@ -60,7 +69,7 @@ class SYS_INFO:
             CREATE TABLE IF NOT EXISTS iprequest_junction (
             id INT AUTO_INCREMENT PRIMARY KEY,
             ip_address VARCHAR(45),
-            port_number INT,
+            port_number VARCHAR(50),
             request_time DATETIME,
             request_count INT DEFAULT 1,
             FOREIGN KEY (ip_address) REFERENCES ip(ip_address) ,
@@ -71,18 +80,18 @@ class SYS_INFO:
             #all setting
             cursor.execute("""
             
-CREATE TABLE IF NOT EXISTS Settings (
-    admin_name VARCHAR(100) NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
+CREATE TABLE IF NOT EXISTS settings (
+    admin_name VARCHAR(100) ,
+    password_hash VARCHAR(255) ,
     email VARCHAR(150),
     phone VARCHAR(20),
 
     request_time_limit INT,           -- in minutes
-    max_requests_per_ip INT,
+    max_requests_per_ip JSON,
 
-    honeypot_ips JSON,
+    honeypot_ips VARCHAR(255),
     allowed_ports JSON,
-    sensitive_folders JSON,
+    sensitive_folders VARCHAR(255),
 
     whitelisted_ips JSON,
     blacklisted_ips JSON,
@@ -101,56 +110,118 @@ CREATE TABLE IF NOT EXISTS Settings (
 
 
 
+                # First, checking if table has data so that jr future madhye user ne dilela data mule he change nay honar
+            cursor.execute("SELECT max_requests_per_ip FROM settings")
+            result = cursor.fetchone()
+
+            if result == None:
+                # Prepare default data
+                timer = [1,2, 3, 4,5, 10, 20, 30]
+                iprequestlimit = [150, 320, 430, 540, 650, 10000]
+                di = dict(zip((timer),( iprequestlimit)))
+                json_data = json.dumps(di)
+
+                # Insert JSON into the table
+                query = "INSERT INTO settings(max_requests_per_ip) VALUES (%s)"
+                cursor.execute(query, (json_data,))
+                connection.commit()
 
 
-    
+
+
+
+
+
+
+
+   
+
     
     # Continuously monitor network requests
     def monitor_requests(self):
-        
-            global request_queue
-            connections = psutil.net_connections(kind='inet')
-            for conn in connections:
-                if conn.status == "ESTABLISHED" and conn.raddr:
-                    ip = conn.raddr.ip
-                    port = conn.raddr.port
-                    protocol = port
-                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_file_path = "securegate_detailed_log2.txt"
+        try:
+            with open(log_file_path, "r") as f:
+                lines = f.readlines()
+            remaining_lines=[]
+            for line in lines:
+                try:
+                    # Split by parts
+                    time_part = line.split("]")[0][1:]  # Remove starting [ and ending ]
+                    rest = line.split("]")[1].strip()
 
-                    request_data = {"IP": ip, "Protocol": protocol, "Time": timestamp} #dict
-                    if request_data not in temp_queue:  
-                        request_queue.put(request_data) 
-                        temp_queue.append(request_data)
-                        print(f"New Request: {request_data}")
-                
+                    ip_part, proto_part, port_part = rest.split(" | ")
+
+                    src_ip, dst_ip = ip_part.split(" -> ")
+                    protocol = proto_part.split(": ")[1]
+                    dst_port = port_part.split(": ")[1]
+
+                    # Now you can store/use them as variables
+                    print("Time:", time_part)
+                    print("Source IP:", src_ip)
+                    print("Destination IP:", dst_ip)
+                    print("Protocol:", protocol)
+                    print("Destination Port:", dst_port)
+                    print("-" * 40)
+                    request = {
+                "Time": time_part,
+                "Source_IP": src_ip.strip(),
+                "Destination_IP": dst_ip.strip(),
+                "Protocol": protocol.strip(),
+                "Destination_Port": dst_port.strip()
+                         }
+                    request_queue.put(request)
+                except Exception as e:
+                    print("Error processing line:", line)
+                    print("Reason:", e)
+                    remaining_lines.append(line)
+            
+            with open(log_file_path, "w") as f:
+                f.writelines(remaining_lines)    
+
+        except Exception as e:
+            print("Reason:", e)
+            
+
+
+
+
+
+
+
+           
     def process(self):
-        
-            global request_queue
-            while not request_queue.empty():
-                cr_request=request_queue.get()
-                ip=cr_request["IP"]
-                time=cr_request["Time"]
-                request_type=cr_request["Protocol"]
-                ip_tuple=self.ips.fetch_ip()
-                request_tuple=self.request.fetch_request()
+            global data,request_queue
+                
+                
+            if not request_queue.empty():
+                while not request_queue.empty():
+                    curr_request = request_queue.get()
 
-                print("\n Ip tuple is",ip_tuple,"\n")
-                if (ip,) in ip_tuple:
-                    self.ips.inc_ip(ip)
-                else:
-                    self.ips.ins_ip(ip,time)
-                    #print("\n request tuple is",request_tuple,"\n")
-                if (request_type,) in request_tuple:
-                    self.request.inc_request(request_type)
-                else:
-                    self.request.ins_request(request_type,time)
-                    print("fetched:-",iprequest.fetch_iprequest())
-                if (str(ip),request_type) in iprequest.fetch_iprequest():    #list of tuple is provided ani tyat ip as string consider so str is used                    self.iprequest.inc_iprequest(ip,request_type)
-                        print("\n incremented \n")
-                else:
-                    self.iprequest.ins_iprequest(ip,request_type,time)
-                    
-                request_queue.task_done()
+                    ip=curr_request["Source_IP"]
+                    time=curr_request["Time"]
+                    request_type=curr_request["Destination_Port"]
+                    network_protocol=curr_request["Protocol"]
+                    destination_ip=curr_request["Destination_IP"]
+                    ip_tuple=self.ips.fetch_ip()
+                    request_tuple=self.request.fetch_request()
+                    #print("\n Ip tuple is",ip_tuple,"\n")
+                    if (ip,) in ip_tuple:
+                        self.ips.inc_ip(ip)
+                    else:
+                        self.ips.ins_ip(ip,time)
+                        #print("\n request tuple is",request_tuple,"\n")
+                    if (request_type,) in request_tuple:
+                        self.request.inc_request(request_type)
+                    else:
+                        self.request.ins_request(request_type,time)
+                    # print("fetched:-",iprequest.fetch_iprequest())
+                    if (str(ip),request_type) in iprequest.fetch_iprequest():    #list of tuple is provided ani tyat ip as string consider so str is used                    self.iprequest.inc_iprequest(ip,request_type)
+                        self.iprequest.inc_iprequest(ip,request_type)
+                    else:
+                        self.iprequest.ins_iprequest(ip,request_type,time)
+                        
+
     @staticmethod
     def is_connected_to_internet():
         try:
@@ -162,26 +233,26 @@ CREATE TABLE IF NOT EXISTS Settings (
 
 
     def check(self):
-        
-            try:
-                timer=[1,2,3,4,5,10,20,30,40,50,60]  #it will also decide in future
-                ipsreqlimit=[10,20,30,40,50,100,200,300,400,False,False] #later will decide it from admin
-                di={}
-                for i in range(len(timer)):
-                    di[timer[i]] = ipsreqlimit[i]   #dictionary create of timer and  iprequestlimit
+        try:
+            cursor.execute("SELECT max_requests_per_ip from settings")
+            result = cursor.fetchone()
+            if result:
+                json_data = result[0]  # The JSON string
+                reqpertime_dict = json.loads(json_data)  # Convert to Python dictionary
 
-                for tm in timer:
-                    time_ago = datetime.now() - timedelta(minutes=tm)
+                for timer,ipreqlimit in reqpertime_dict.items():
+        
+                    time_ago = datetime.now() - timedelta(minutes=int(timer))
                     self.cursor.execute("""
-                        SELECT ip_address, COUNT(*) as ip_count
-                        FROM iprequest_junction
-                        WHERE request_time >= %s
-                        GROUP BY ip_address
-                    """, (time_ago,))
+                            SELECT ip_address, COUNT(*) as ip_count
+                            FROM iprequest_junction
+                            WHERE request_time >= %s
+                            GROUP BY ip_address
+                        """, (time_ago,))
                     ip_counts = self.cursor.fetchall()
 
 
-                    # Group by Port
+                        # Group by Port
                     self.cursor.execute("""
                         SELECT port_number, COUNT(*) as port_count
                         FROM iprequest_junction
@@ -197,14 +268,13 @@ CREATE TABLE IF NOT EXISTS Settings (
                     total_requests = self.cursor.fetchone()[0]
                     
                     for x in ip_counts:
-                        self.checkblk(x,"ip",di[tm])
+                        self.checkblk(x,"ip",int(timer))
                     for x in port_counts:
-                        self.checkblk(x,"port",di[tm])
+                        self.checkblk(x,"port",int(timer))
                     # total_requests:
-                    self.checkblk(total_requests,"iprequest",di[tm])
+                    self.checkblk(total_requests,"iprequest",int(timer))
                 #unblock time
-                
-
+        
 
                 self.cursor.execute("""
                 SELECT ip_address, block_time FROM ip WHERE is_blocked = 1 AND block_time <= %s
@@ -220,10 +290,14 @@ CREATE TABLE IF NOT EXISTS Settings (
                     for ip_row in country_ips:
                         ip = ip_row[0]
                         country = self.ips.get_country(ip) 
-                        print("country \n")
+                        #print("country \n")
                         self.cursor.execute("UPDATE ip SET country = %s WHERE ip_address = %s", (country, ip))
-            except Exception as e:
-                print(e)    
+        except Exception as e:
+                print(e)
+
+    def issuspicious(val,self):
+        #ithe nay kay kraychy
+        pass    
     def checkblk(self,option,ipdata,limit):
         ip=ipdata[0]
         req=ipdata[1]
@@ -234,12 +308,12 @@ CREATE TABLE IF NOT EXISTS Settings (
         if option=="port":
             if req>limit:
                 port=ip  #since ithe port yenar
-                issupicious(port)
+                self.issupicious(port)
         if option=="iprequest":
             count=ip
             if req>limit:
                 reqps=int(((req-limit)/limit)*100)
-                issupicious(count)
+                self.issupicious(count)
             
 
 
@@ -294,6 +368,7 @@ class IPS:
         except Exception:
            return [] 
     def block_ip(self,ip_address,blkps):
+        print("block ip is:",ip_address)
         try:
             
             if not self.loopback(ip_address):
@@ -308,7 +383,7 @@ class IPS:
                 #  request_type table 
                 self.cursor.execute("UPDATE request_type SET is_blocked = 1 WHERE `ip_address` = %s", (ip_address,))
                 self.connection.commit()
-                print(f"IP {ip_address} has been blocked in all tables.")
+                #print(f"IP {ip_address} has been blocked in all tables.")
 
         except Exception as e:
             print(f"Error blocking IP: {e}")
@@ -392,17 +467,17 @@ class IPREQUEST:
         self.cursor.execute(query,(ip,request,))
         
         a=self.cursor.fetchall() 
-        print("\n incremented here",a,"\n")
+        #print("\n incremented here",a,"\n")
 
 
 
 
     def inc_iprequest(self,ip,request):
         # Update the count for existing IPv4 address
-        print("\n    inc_iprequest is called\n ")
+        #print("\n    inc_iprequest is called\n ")
         query = """ UPDATE iprequest_junction SET request_count = request_count + 1 WHERE ip_address=%s and port_number = %s    """
         self.cursor.execute(query,(ip,request,))
-        print("called imp")
+        #print("called imp")
         self.checking(ip,request)
             
         
@@ -442,94 +517,108 @@ sys_info=SYS_INFO(ips,request,iprequest,connection,cursor)
 
 import threading
 
+
+
+
+
+
+
+
+
+
 while True:
     sys_info.monitor_requests()
     sys_info.process()
-    sys_info.check()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    #sys_info.check()
 
 
 
 
 
 '''
-import time
-from datetime import datetime
 
-def collect_ip():
-    # Simulate IP collection
-    print(f"Collected IP at {datetime.now().time()}")
+import threading
 
-def run_collector():
-    # Target time window
-    start_time = datetime.strptime("20:35:00", "%H:%M:%S").time()
-    end_time = datetime.strptime("20:35:5", "%H:%M:%S").time()
+# Start all threads only ONCE
+monitor_thread = threading.Thread(target=sys_info.monitor_requests, daemon=True)
+process_thread = threading.Thread(target=sys_info.process, daemon=True)
+check_thread = threading.Thread(target=sys_info.check, daemon=True)
 
-    print("[*] Waiting for 08:30:00 to start collecting...")
-
-    while True:
-        current_time = datetime.now().time()
-
-        if current_time >= start_time and current_time <= end_time:
-            
-            sys_info.monitor_requests()
-            sys_info.process()
-            sys_info.check()
-        elif current_time > end_time:
-            print("[*] Time window ended.")
-            break
-
-run_collector()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# Start the threads
+monitor_thread.start()
+process_thread.start()
+check_thread.start()
 
 
 '''
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 """
 def execute():
     while True:

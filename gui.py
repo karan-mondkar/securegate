@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 import json
 
 
-import random
 validate_user=False
 current_page = 0
 rows_per_page = 15
@@ -136,23 +135,29 @@ global interval_var, request_limit_var
 
 
 def fetch_settings_data():
-    dt = db()
-    connection, cursor = dt
-    cursor.execute("""
-        SELECT 
-            phone, 
-            request_time_limit, 
-            max_requests_per_ip, 
-            honeypot_ips, 
-            sensitive_folders, 
-        upload_folder 
-        FROM settings 
-        LIMIT 1
-                """)
-    result = cursor.fetchone()
-    return result
-
-
+    try:
+        dt = db()
+        result=["","","","","","","","",""]
+        connection, cursor = dt
+        cursor.execute("""
+            SELECT 
+                phone, 
+                request_time_limit, 
+                max_requests_per_ip, 
+                honeypot_ips, 
+                sensitive_folders, 
+            FROM settings 
+            LIMIT 1
+                    """)
+        result = cursor.fetchone()
+        if result:
+            return result
+        else:
+            result=["","","","","","","","",""]
+                
+    except:
+        result=["","","","","","","","",""]
+        return result
 def jsonins(tp,data,data2):
     t=db()
     conn=t[0]
@@ -172,17 +177,6 @@ def jsonins(tp,data,data2):
         cursor.execute(query, (json_data,))
         conn.commit()
 
-    elif tp == "honeypot":
-            query = "SELECT honeypot_ips FROM settings"
-            cursor.execute(query)
-            result = cursor.fetchone()
-            if result:
-                json_data = result[0]
-                honeypot_dict = json.loads(json_data)
-                honeypot_dict[data] = data2  # data = IP, data2 = info/status
-                updated_json = json.dumps(honeypot_dict)
-                cursor.execute("UPDATE settings SET honeypot_ips = %s", (updated_json,))
-                conn.commit()
                 
     elif tp == "rqpt":
             query = "SELECT request_limit_per_time FROM settings"
@@ -196,7 +190,29 @@ def jsonins(tp,data,data2):
             cursor.execute("UPDATE settings SET honeypot_ips = %s", (updated_json,))
             conn.commit()
                 
+def ins_honey(IP):
+    dt=db()
+    conn=dt[0]
+    cursor=dt[1]
+    query = "SELECT honeypot_ips FROM settings"
+    cursor.execute(query)
+    result = cursor.fetchone()
 
+    if result and result[0]:
+        # string to list
+        ip_list = result[0].split(",")
+        if IP not in ip_list:
+            ip_list.append(IP)
+        updated_ips = ",".join(ip_list)
+    else:
+        updated_ips = IP
+
+    update_query = "UPDATE settings SET honeypot_ips = %s"
+    cursor.execute(update_query, (updated_ips,))
+    conn.commit()
+
+
+     
 
 
 def settingshow(setnum):
@@ -257,6 +273,7 @@ def settingshow(setnum):
             prev_honeypots = result[3]
             prev_sensative_folder = result[4]
 
+            
             # Grid layout row tracker
             row = 0
 
@@ -264,7 +281,6 @@ def settingshow(setnum):
             tk.Label(content_frame, text="Admin Mobile Number").grid(row=row, column=0, padx=5, pady=5, sticky='w')
             phone = tk.Entry(content_frame)
             phone.grid(row=row, column=1, padx=5, pady=5)
-            phone.insert(0, prev_phone)
             tk.Button(content_frame, text="Submit", command=lambda: update_setting("phone")).grid(row=row, column=2, padx=5, pady=5)
             row += 1
 
@@ -272,7 +288,6 @@ def settingshow(setnum):
             tk.Label(content_frame, text="Request Time Limit (in minutes)").grid(row=row, column=0, padx=5, pady=5, sticky='w')
             time_limit = tk.Entry(content_frame)
             time_limit.grid(row=row, column=1, padx=5, pady=5)
-            time_limit.insert(0, prev_time_limit)
             tk.Button(content_frame, text="Submit", command=lambda: update_setting("request_time_limit")).grid(row=row, column=2, padx=5, pady=5)
             row += 1
             
@@ -280,9 +295,8 @@ def settingshow(setnum):
             tk.Label(content_frame, text="Max Requests Per IP (per hour)").grid(row=row, column=0, padx=5, pady=5, sticky='w')
             max_requests_per_ip = tk.Entry(content_frame)
             max_requests_per_ip.grid(row=row, column=1, padx=5, pady=5)
-            max_requests_per_ip.insert(0, prev_max_requests)
             
-            tk.Button(content_frame, text="Submit", command=lambda: update_setting("max_requests_per_ip_per_time")).grid(row=row, column=2, padx=5, pady=5)
+            tk.Button(content_frame, text="Submit", command=lambda: update_setting("max_requests_per_ip")).grid(row=row, column=2, padx=5, pady=5)
             row += 1
 
 
@@ -290,7 +304,6 @@ def settingshow(setnum):
             tk.Label(content_frame, text="Honeypot IPs (comma-separated)").grid(row=row, column=0, padx=5, pady=5, sticky='w')
             honeypot_ips = tk.Entry(content_frame)
             honeypot_ips.grid(row=row, column=1, padx=5, pady=5)
-            honeypot_ips.insert(0, str(prev_honeypots))
             
             tk.Button(content_frame, text="Submit", command=lambda: update_setting("honeypot_ips")).grid(row=row, column=2, padx=5, pady=5)
             row += 1
@@ -299,8 +312,7 @@ def settingshow(setnum):
             tk.Label(content_frame, text="Encrypted Folder Path(s)").grid(row=row, column=0, padx=5, pady=5, sticky='w')
             folder_path = tk.Entry(content_frame)
             folder_path.grid(row=row, column=1, padx=5, pady=5)
-            folder_path.insert(0, str(prev_sensative_folder))
-            tk.Button(content_frame, text="Submit", command=lambda: update_setting("sensitive_folders")).grid(row=row, column=2, padx=5, pady=5)
+            tk.Button(content_frame, text="Submit", command=lambda: update_setting("folder_path")).grid(row=row, column=2, padx=5, pady=5)
             row += 1
 
             # --- Allowed Ports ---
@@ -340,6 +352,15 @@ def settingshow(setnum):
             tk.Button(content_frame, text="Insert", command=lambda: update_setting("max_requests_per_ip")).grid(row=row, column=2, padx=5, pady=5)
 
 
+
+            prev_hist={phone:prev_phone,time_limit:prev_time_limit,
+                       max_requests_per_ip:prev_max_requests,
+                       honeypot_ips:prev_honeypots,
+                       folder_path:prev_sensative_folder
+                       }
+            for key,val in prev_hist.items():
+                if val!=None:
+                    key.insert(0,val) 
 
 
 
@@ -387,10 +408,10 @@ def update_setting(val):
             jsonins("rqpt",interval_var,request_limit_var)
 
     if val=="honeypot_ips":
-            jsonins("honeypot",random.random,honeypot_ips.get())
+            ins_honey(honeypot_ips.get())
     
-    if val=="upload_folders":
-            query = """ UPDATE Settings SET upload_folders = %s """
+    if val=="folder_path":
+            query = """ UPDATE Settings SET sensitive_folders= %s """
             cursor.execute(query, (folder_path.get(),))
             connection.commit()
     if val=="allowed_port":
