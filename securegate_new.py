@@ -14,6 +14,7 @@ from datetime import datetime
 import os
 
 
+
 import queue
 request_queue=queue.Queue(maxsize=50000)
 
@@ -139,52 +140,35 @@ CREATE TABLE IF NOT EXISTS settings (
     
     # Continuously monitor network requests
     def monitor_requests(self):
-        log_file_path = "securegate_detailed_log2.txt"
+        log_file_path = "securegate_detailed_log2.json"
+        remaining_lines = []
+
         try:
             with open(log_file_path, "r") as f:
                 lines = f.readlines()
-            remaining_lines=[]
+
             for line in lines:
+                line = line.strip()
                 try:
-                    # Split by parts
-                    time_part = line.split("]")[0][1:]  # Remove starting [ and ending ]
-                    rest = line.split("]")[1].strip()
+                    data = json.loads(line)  # Parse JSON
 
-                    ip_part, proto_part, port_part = rest.split(" | ")
+                    required_keys = ["time", "src_ip", "dst_ip", "protocol", "dst_port"]
+                    if not all(key in data for key in required_keys):
+                        raise ValueError("Missing required fields")
 
-                    src_ip, dst_ip = ip_part.split(" -> ")
-                    protocol = proto_part.split(": ")[1]
-                    dst_port = port_part.split(": ")[1]
+                    request_queue.put(data)  # Store it even if values are "N/A"
 
-                    # Now you can store/use them as variables
-                    print("Time:", time_part)
-                    print("Source IP:", src_ip)
-                    print("Destination IP:", dst_ip)
-                    print("Protocol:", protocol)
-                    print("Destination Port:", dst_port)
-                    print("-" * 40)
-                    request = {
-                "Time": time_part,
-                "Source_IP": src_ip.strip(),
-                "Destination_IP": dst_ip.strip(),
-                "Protocol": protocol.strip(),
-                "Destination_Port": dst_port.strip()
-                         }
-                    request_queue.put(request)
                 except Exception as e:
-                    print("Error processing line:", line)
-                    print("Reason:", e)
-                    remaining_lines.append(line)
-            
-            with open(log_file_path, "w") as f:
-                f.writelines(remaining_lines)    
-
-        except Exception as e:
-            print("Reason:", e)
-            
-
-
-
+                    print(f"Error parsing line: {line}\nReason: {e}")
+                    remaining_lines.append(line + '\n')  # Keep malformed lines for nantr insertion
+            try:
+                # Overwrite file with only failed lines
+                with open(log_file_path, "w") as f:
+                    f.writelines(remaining_lines)
+            except Exception as e:
+                    print(e)
+        except Exception as outer_error:
+            print("Fatal error while reading/parsing log file:", outer_error)
 
 
 
@@ -198,11 +182,11 @@ CREATE TABLE IF NOT EXISTS settings (
                 while not request_queue.empty():
                     curr_request = request_queue.get()
 
-                    ip=curr_request["Source_IP"]
-                    time=curr_request["Time"]
-                    request_type=curr_request["Destination_Port"]
-                    network_protocol=curr_request["Protocol"]
-                    destination_ip=curr_request["Destination_IP"]
+                    ip=curr_request["src_ip"]
+                    time=curr_request["time"]
+                    request_type=curr_request["dst_port"]
+                    network_protocol=curr_request["protocol"]
+                    destination_ip=curr_request["dst_ip"]
                     ip_tuple=self.ips.fetch_ip()
                     request_tuple=self.request.fetch_request()
                     #print("\n Ip tuple is",ip_tuple,"\n")

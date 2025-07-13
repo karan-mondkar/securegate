@@ -5,20 +5,27 @@ from scapy.all import sniff, IP, TCP, UDP, ICMP, Ether, Raw
 from datetime import datetime
 import os
 import time
-
+import portalocker
+import json
 import queue
 
 last_run=0 
 
-open("securegate_detailed_log1.txt", "a").close()
-open("securegate_detailed_log2.txt", "a").close()
+open("securegate_detailed_log1.json", "a").close()
+open("securegate_detailed_log2.json", "a").close()
 
-request_queue = queue.Queue(maxsize=5000)
+open("imp_detailed_log.json", "a").close()
+
+def safe(data, key, default="N/A"):
+    return str(data.get(key, default)).strip()
+
+request_queue = queue.Queue(maxsize=50000)
 def logfile(data):
+    open("securegate_detailed_log1.json", "a").close()
     global last_run
     current_time = time.time()
-    source_file = "securegate_detailed_log1.txt"
-    destination_file = "securegate_detailed_log2.txt"
+    source_file = "securegate_detailed_log1.json"
+    destination_file = "securegate_detailed_log2.json"
 
     formatted = (
         f"[{data['Time']}] {data['Protocol']} | "
@@ -27,37 +34,56 @@ def logfile(data):
         f"Payload: {data['Payload_Size']} bytes | MAC: {data['MAC_Src']} -> {data['MAC_Dst']}"
     )
 
-    request= (
-    f"[{data['Time']}] {data['Src_IP']} -> {data['Dst_IP']} | "
-    f"Protocol: {data['Protocol']} | Dst Port: {data['Dst_Port']}"
-    )
-
+    request =request = {
+    "time": safe(data, "Time"),
+    "src_ip": safe(data, "Src_IP"),
+    "dst_ip": safe(data, "Dst_IP"),
+    "protocol": safe(data, "Protocol", "Unknown"),
+    "dst_port": safe(data, "Dst_Port")
+    }
     request_queue.put(request)
 
     if not request_queue.empty():
-        while request_queue.empty():    
-            with open(source_file, "a") as f:
-                f.write(request_queue.get() + "\n")
-
-    if current_time - last_run >= 10:
-        last_run = current_time        
-        if os.path.exists(source_file):
+        while not request_queue.empty():
+            a = request_queue.get()
             try:
-                # Open the source file in read mode
+                with open(source_file, "a") as f1:
+                    portalocker.lock(f1, portalocker.LOCK_EX)
+                    f1.write(json.dumps(a) + "\n")
+                    portalocker.unlock(f1)
+
+                with open("imp_detailed_log.json", "a") as f2:
+                    f2.write(json.dumps(a) + "\n")
+
+            except portalocker.exceptions.LockException:
+                print("File is locked, re-adding to queue")
+                request_queue.put(a)
+            
+        
+
+
+    if current_time - last_run >= 2:
+        last_run = current_time        
+        try:
+            if os.path.exists(source_file):
                 with open(source_file, "r") as src:
-                    content = src.read()
+                    try:
+                        # Try locking the source file (non-blocking)
+                        portalocker.lock(src, portalocker.LOCK_EX | portalocker.LOCK_NB)
+                        content = src.read()
 
-                # Open the destination file in append mode and write content
-                with open(destination_file, "a") as dest:
-                    dest.write(content)
-                os.remove(source_file)
-            except :
-                pass
-            
-            
-            
-            
+                        with open(destination_file, "a") as dest:
+                            dest.write(content)
 
+                        portalocker.unlock(src)
+                        src.close()
+                        os.remove(source_file)
+
+                    except portalocker.exceptions.LockException:
+                        print("Source file is locked. Try again next time.")
+
+        except Exception as e:
+            print(f"Error during file copy or delete: {e}")
 
 
 
@@ -71,7 +97,7 @@ def logfile(data):
 
 def log_packet(packet):
         global request_queue,data
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+        timestamp = datetime.fromtimestamp(packet.time).strftime("%Y-%m-%d %H:%M:%S.%f")        
         data = {
             "Time": timestamp,
             "Protocol": "Unknown",
@@ -113,9 +139,7 @@ def log_packet(packet):
 
         
 
-       
+        #print(data)
         logfile(data)
 
-
-
-sniff(iface="eth0", prn=log_packet, store=False)
+sniff(iface="Wi-Fi", prn=log_packet, store=False)
