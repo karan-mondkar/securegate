@@ -24,10 +24,11 @@ request_queue=queue.Queue(maxsize=50000)
 
 class SYS_INFO:
     global request,data
-    def __init__(self, ips,request,iprequest,connection,cursor):
+    def __init__(self, ips,request,iprequest,network_protocol,connection,cursor):
         self.ips=ips
         self.request=request
         self.iprequest=iprequest
+        self.network_protocol=network_protocol
         self.connection=connection
         self.cursor=cursor
         
@@ -51,7 +52,8 @@ class SYS_INFO:
             request_count INT DEFAULT 1,
             is_blocked BOOLEAN DEFAULT 0,
             is_local BOOLEAN DEFAULT 0
-            ,block_time DATETIME,country VARCHAR(45))
+            ,block_time DATETIME,country VARCHAR(45)
+            ,last_seen DATETIME)
             """)
 
         #request_type table
@@ -62,20 +64,24 @@ class SYS_INFO:
             request_count INT DEFAULT 1,               
             request_time DATETIME
             ,flagged TINYINT(10) DEFAULT 0               
-            )
+            ,last_seen DATETIME
+                           )
             """)
 
             #ip_request_junction table
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS iprequest_junction (
-            id INT AUTO_INCREMENT PRIMARY KEY,
             ip_address VARCHAR(45),
             port_number VARCHAR(50),
             request_time DATETIME,
             request_count INT DEFAULT 1,
+            
+            PRIMARY KEY (ip_address, port_number),
+                           
             FOREIGN KEY (ip_address) REFERENCES ip(ip_address) ,
             FOREIGN KEY (port_number) REFERENCES request_type(port_number) 
-            )   
+            ,last_seen DATETIME
+                           )   
             """)
 
             #all setting
@@ -102,10 +108,18 @@ CREATE TABLE IF NOT EXISTS settings (
 
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-)
+
+                           )
 
 
 """)
+            cursor.execute("""CREATE TABLE IF NOT EXISTS NETWORK_protocol (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    protocol VARCHAR(10) NOT NULL,  
+    request_count INT DEFAULT 0,             
+    first_seen DATETIME,                     
+    last_seen DATETIME                       
+    )""")
 
             print("All tables created successfully.")
 
@@ -187,24 +201,16 @@ CREATE TABLE IF NOT EXISTS settings (
                     request_type=curr_request["dst_port"]
                     network_protocol=curr_request["protocol"]
                     destination_ip=curr_request["dst_ip"]
-                    ip_tuple=self.ips.fetch_ip()
-                    request_tuple=self.request.fetch_request()
-                    #print("\n Ip tuple is",ip_tuple,"\n")
-                    if (ip,) in ip_tuple:
-                        self.ips.inc_ip(ip)
-                    else:
-                        self.ips.ins_ip(ip,time)
-                        #print("\n request tuple is",request_tuple,"\n")
-                    if (request_type,) in request_tuple:
-                        self.request.inc_request(request_type)
-                    else:
-                        self.request.ins_request(request_type,time)
-                    # print("fetched:-",iprequest.fetch_iprequest())
-                    if (str(ip),request_type) in iprequest.fetch_iprequest():    #list of tuple is provided ani tyat ip as string consider so str is used                    self.iprequest.inc_iprequest(ip,request_type)
-                        self.iprequest.inc_iprequest(ip,request_type)
-                    else:
-                        self.iprequest.ins_iprequest(ip,request_type,time)
-                        
+                    
+                    self.ips.ins_ip(ip,time)
+                    
+                    self.request.ins_request(request_type,time)
+                    
+                    
+                    self.iprequest.ins_iprequest(ip,request_type,time)
+                    
+                    self.request.ins_request(network_protocol,time)
+
 
     @staticmethod
     def is_connected_to_internet():
@@ -327,30 +333,26 @@ class IPS:
     def ins_ip(self,ip,time):
         if SYS_INFO.is_connected_to_internet():
             country=self.get_country(ip)
-            query = """ INSERT INTO ip (ip_address,request_time,country) VALUES (%s,%s,%s)"""
-            self.cursor.execute(query, (ip,time,country))
+            # ---ata vrchi request_time chi value ithe assign  hoil
+            query = """ INSERT INTO ip (ip_address,request_time,country) VALUES (%s,%s,%s)
+            ON DUPLICATE KEY UPDATE
+            request_count = request_count + 1,
+            last_seen = VALUES(request_time)     
+            
+            """
+            self.cursor.execute(query, (ip,time,country,))  
             self.connection.commit()
         else:
-            query = """ INSERT INTO ip (ip_address,request_time) VALUES (%s,%s)"""
+            query = """ INSERT INTO ip (ip_address,request_time) VALUES (%s,%s)
+            ON DUPLICATE KEY UPDATE
+            request_count = request_count + 1,
+            last_seen = VALUES(time)
+            
+            """
             self.cursor.execute(query, (ip,time))
             self.connection.commit()
-
-    def inc_ip(self,ip):
-        # Update the count for existing IPv4 address
-        query = """ UPDATE ip SET request_count = request_count + 1 WHERE ip_address = %s   """
-        self.cursor.execute(query,(ip,))
-        self.connection.commit()
     
-    def fetch_ip(self):
-        try:
-            query = "SELECT ip_address FROM ip"
-            self.cursor.execute(query)
-            result = self.cursor.fetchall()
-            if not result:
-                return []
-            return result    
-        except Exception:
-           return [] 
+     
     def block_ip(self,ip_address,blkps):
         print("block ip is:",ip_address)
         try:
@@ -414,33 +416,33 @@ class REQUEST:
         
 
     def ins_request(self,request,time):
-        query = """ INSERT INTO request_type (port_number,request_time) VALUES (%s,%s)"""
-        self.cursor.execute(query, (request,time,))
+        #---ata vrchi request_time chi value ithe assign  hoil
+        query = """ INSERT INTO request_type (port_number,request_time) VALUES (%s,%s)
+        
+        ON DUPLICATE KEY UPDATE
+            request_count = request_count + 1,
+            request_time = VALUES(last_seen);   
+             
+
+        """
+        self.cursor.execute(query, (request,time))  
         self.connection.commit()
 
-    def inc_request(self,request):
-        # Update the count for existing IPv4 address
-        query = """ UPDATE request_type SET request_count = request_count + 1 WHERE port_number = %s   """
-        self.cursor.execute(query,(request,))
-        self.connection.commit()
-    def fetch_request(self):
-        try:
-            cursor = self.connection.cursor()
-            query = "SELECT port_number FROM request_type"
-            self.cursor.execute(query)
-            result = self.cursor.fetchall()
-            if not result:
-                return []
-            return result
-        except Exception:
-           return [] 
+
+     
 class IPREQUEST:
     def __init__(self,connection,cursor):
         self.connection=connection
         self.cursor=cursor
         
     def ins_iprequest(self,ip,port,time):
-        query = """ INSERT INTO iprequest_junction (ip_address,port_number,request_time) VALUES (%s,%s,%s)"""
+        
+        #   ---ata vrchi request_time chi value ithe assign  hoil
+        query = """ INSERT INTO iprequest_junction (ip_address,port_number,request_time) VALUES (%s,%s,%s)
+         ON DUPLICATE KEY UPDATE
+            request_count = request_count + 1,
+        request_time = VALUES(last_seen)
+         """
         self.cursor.execute(query, (ip,port,time,))
         self.connection.commit()
     #code checking from here
@@ -456,26 +458,66 @@ class IPREQUEST:
 
 
 
-    def inc_iprequest(self,ip,request):
-        # Update the count for existing IPv4 address
-        #print("\n    inc_iprequest is called\n ")
-        query = """ UPDATE iprequest_junction SET request_count = request_count + 1 WHERE ip_address=%s and port_number = %s    """
-        self.cursor.execute(query,(ip,request,))
-        #print("called imp")
-        self.checking(ip,request)
+    
             
+
+
+
+class NETWORK_PROTOCOL:
+    
+    def __init__(self,connection,cursor):
+        self.connection=connection
+        self.cursor=cursor
+    
+
+    def ins_network_protocol(self,request,time):
+        #---ata vrchi request_time chi value ithe assign  hoil
+        query = """ INSERT INTO network_porotocol(protocol,first_seen) VALUES (%s,%s)
+        ON DUPLICATE KEY UPDATE
+            request_count = request_count + 1,
+            
+            request_time = VALUES(last_seen);   
+
+
         
-    def fetch_iprequest(self):
-            try:
-                query = "SELECT ip_address,port_number FROM iprequest_junction"
-                self.cursor.execute(query)
-                result = self.cursor.fetchall()
-                if not result:
-                    return []
-                return result
-            except Exception:
-                return [] 
-            
+        """
+        self.cursor.execute(query, (request,time,))
+        self.connection.commit()
+    
+    def fetch_network_protocol(self):
+        try:
+            cursor = self.connection.cursor()
+            query = "SELECT types FROM network_protocol"
+            self.cursor.execute(query)
+            result = self.cursor.fetchall()
+            if not result:
+                return []
+            return result
+        except Exception:
+           return [] 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 SYS_INFO.dbcreate()
@@ -497,7 +539,8 @@ SYS_INFO.dbcreate()
 
 request=REQUEST(connection,cursor)
 iprequest=IPREQUEST(connection,cursor)
-sys_info=SYS_INFO(ips,request,iprequest,connection,cursor)
+network_protocol=NETWORK_PROTOCOL(connection,cursor)
+sys_info=SYS_INFO(ips,request,iprequest,network_protocol,connection,cursor)
 
 import threading
 
