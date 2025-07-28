@@ -28,7 +28,7 @@ class SYS_INFO:
         self.ips=ips
         self.request=request
         self.iprequest=iprequest
-        self.network_protocol=network_protocol
+        self.network_protocol_class=network_protocol
         self.connection=connection
         self.cursor=cursor
         
@@ -73,13 +73,11 @@ class SYS_INFO:
             CREATE TABLE IF NOT EXISTS iprequest_junction (
             ip_address VARCHAR(45),
             port_number VARCHAR(50),
+            protocol VARCHAR(10) ,
             request_time DATETIME,
             request_count INT DEFAULT 1,
             
-            PRIMARY KEY (ip_address, port_number),
-                           
-            FOREIGN KEY (ip_address) REFERENCES ip(ip_address) ,
-            FOREIGN KEY (port_number) REFERENCES request_type(port_number) 
+            PRIMARY KEY (ip_address, port_number,protocol)
             ,last_seen DATETIME
                            )   
             """)
@@ -113,7 +111,7 @@ CREATE TABLE IF NOT EXISTS settings (
 
 
 """)
-            cursor.execute("""CREATE TABLE IF NOT EXISTS NETWORK_protocol (
+            cursor.execute("""CREATE TABLE IF NOT EXISTS network_protocol (
     id INT AUTO_INCREMENT PRIMARY KEY,
     protocol VARCHAR(10) NOT NULL,  
     request_count INT DEFAULT 0,             
@@ -207,9 +205,9 @@ CREATE TABLE IF NOT EXISTS settings (
                     self.request.ins_request(request_type,time)
                     
                     
-                    self.iprequest.ins_iprequest(ip,request_type,time)
+                    self.iprequest.ins_iprequest(ip,request_type,network_protocol,time)
                     
-                    self.request.ins_request(network_protocol,time)
+                    self.network_protocol_class.ins_network_protocol(network_protocol,time)
 
 
     @staticmethod
@@ -331,27 +329,27 @@ class IPS:
         self.cursor=cursor
         
     def ins_ip(self,ip,time):
-        if SYS_INFO.is_connected_to_internet():
-            country=self.get_country(ip)
-            # ---ata vrchi request_time chi value ithe assign  hoil
-            query = """ INSERT INTO ip (ip_address,request_time,country) VALUES (%s,%s,%s)
+        try:
+            if SYS_INFO.is_connected_to_internet():
+                country=self.get_country(ip)
+                # ---ata vrchi request_time chi value ithe assign  hoil
+                query = """ INSERT INTO ip (ip_address,request_time,country) VALUES (%s,%s,%s)
             ON DUPLICATE KEY UPDATE
-            request_count = request_count + 1,
-            last_seen = VALUES(request_time)     
-            
-            """
-            self.cursor.execute(query, (ip,time,country,))  
-            self.connection.commit()
-        else:
-            query = """ INSERT INTO ip (ip_address,request_time) VALUES (%s,%s)
-            ON DUPLICATE KEY UPDATE
-            request_count = request_count + 1,
-            last_seen = VALUES(time)
-            
-            """
-            self.cursor.execute(query, (ip,time))
-            self.connection.commit()
-    
+                request_count = request_count + 1,
+                last_seen = VALUES(request_time) 
+                """
+                self.cursor.execute(query, (ip,time,country,))  
+                self.connection.commit()
+            else:
+                query = """ INSERT INTO ip (ip_address,request_time) VALUES (%s,%s)
+                ON DUPLICATE KEY UPDATE
+        request_count = request_count + 1,
+        last_seen = VALUES(request_time)
+                """
+                self.cursor.execute(query, (ip,time,))  
+                self.connection.commit()
+        except Exception as e:
+            print(e)
      
     def block_ip(self,ip_address,blkps):
         print("block ip is:",ip_address)
@@ -418,12 +416,9 @@ class REQUEST:
     def ins_request(self,request,time):
         #---ata vrchi request_time chi value ithe assign  hoil
         query = """ INSERT INTO request_type (port_number,request_time) VALUES (%s,%s)
-        
         ON DUPLICATE KEY UPDATE
-            request_count = request_count + 1,
-            request_time = VALUES(last_seen);   
-             
-
+    request_count = request_count + 1,
+    last_seen = VALUES(request_time)
         """
         self.cursor.execute(query, (request,time))  
         self.connection.commit()
@@ -435,17 +430,19 @@ class IPREQUEST:
         self.connection=connection
         self.cursor=cursor
         
-    def ins_iprequest(self,ip,port,time):
-        
-        #   ---ata vrchi request_time chi value ithe assign  hoil
-        query = """ INSERT INTO iprequest_junction (ip_address,port_number,request_time) VALUES (%s,%s,%s)
-         ON DUPLICATE KEY UPDATE
-            request_count = request_count + 1,
-        request_time = VALUES(last_seen)
-         """
-        self.cursor.execute(query, (ip,port,time,))
-        self.connection.commit()
-    #code checking from here
+    def ins_iprequest(self,ip,port,network_protocol,time):
+        try:
+            #   ---ata vrchi request_time chi value ithe assign  hoil
+            query = """ INSERT INTO iprequest_junction (ip_address,port_number ,protocol,request_time) VALUES (%s,%s,%s,%s)
+            ON DUPLICATE KEY UPDATE
+        request_count = request_count + 1,
+        last_seen = VALUES(request_time)
+        """
+            self.cursor.execute(query, (ip,port,network_protocol,time,))
+            self.connection.commit()
+        except Exception as e:
+            print(e)
+        #code checking from here
     
     
     def checking(self,ip,request):
@@ -472,13 +469,10 @@ class NETWORK_PROTOCOL:
 
     def ins_network_protocol(self,request,time):
         #---ata vrchi request_time chi value ithe assign  hoil
-        query = """ INSERT INTO network_porotocol(protocol,first_seen) VALUES (%s,%s)
-        ON DUPLICATE KEY UPDATE
-            request_count = request_count + 1,
-            
-            request_time = VALUES(last_seen);   
-
-
+        query = """ INSERT INTO network_protocol(protocol,first_seen) VALUES (%s,%s)
+    ON DUPLICATE KEY UPDATE
+    request_count = request_count + 1,
+    last_seen = VALUES(first_seen)
         
         """
         self.cursor.execute(query, (request,time,))
@@ -578,71 +572,6 @@ check_thread.start()
 
 
 '''
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

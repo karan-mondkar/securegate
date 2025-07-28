@@ -34,7 +34,7 @@ def logfile(data):
         f"Payload: {data['Payload_Size']} bytes | MAC: {data['MAC_Src']} -> {data['MAC_Dst']}"
     )
 
-    request =request = {
+    request = {
     "time": safe(data, "Time"),
     "src_ip": safe(data, "Src_IP"),
     "dst_ip": safe(data, "Dst_IP"),
@@ -142,4 +142,4 @@ def log_packet(packet):
         #print(data)
         logfile(data)
 
-sniff(iface="Wi-Fi", prn=log_packet, store=False)
+sniff(iface="eth0", prn=log_packet, store=False)
