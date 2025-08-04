@@ -1,7 +1,7 @@
 
 
 
-from scapy.all import sniff, IP, TCP, UDP, ICMP, Ether, Raw
+from scapy.all import sniff, IP, TCP, UDP, ICMP, Ether,IPv6, Raw
 from datetime import datetime
 import os
 import time
@@ -93,56 +93,69 @@ def logfile(data):
 
 
 
-
-
 def log_packet(packet):
-        global request_queue,data
-        try:
-            timestamp = datetime.fromtimestamp(packet.time).strftime("%Y-%m-%d %H:%M:%S.%f")        
-            data = {
-                "Time": timestamp,
-                "Protocol": "Unknown",
-                "Src_IP": "N/A",
-                "Src_Port": "N/A",
-                "Dst_IP": "N/A",
-                "Dst_Port": "N/A",
-                "Flags": "N/A",
-                "TTL": "N/A",
-                "Window": "N/A",
-                "Payload_Size": 0,
-                "MAC_Src": "N/A",
-                "MAC_Dst": "N/A"
-            }
-            if Ether in packet:
-                data["MAC_Src"] = packet[Ether].src
-                data["MAC_Dst"] = packet[Ether].dst
+    #print(repr(packet))
+    global request_queue, data
+    try:
+        timestamp = datetime.fromtimestamp(packet.time).strftime("%Y-%m-%d %H:%M:%S.%f")
+        data = {
+            "Time": timestamp,
+            "Protocol": "Unknown",
+            "Src_IP": "N/A",
+            "Src_Port": "N/A",
+            "Dst_IP": "N/A",
+            "Dst_Port": "N/A",
+            "Flags": "N/A",
+            "TTL": "N/A",
+            "Window": "N/A",
+            "Payload_Size": 0,
+            "MAC_Src": "N/A",
+            "MAC_Dst": "N/A"
+        }
 
-            if IP in packet:
-                data["Src_IP"] = packet[IP].src
-                data["Dst_IP"] = packet[IP].dst
-                data["TTL"] = packet[IP].ttl
+        # MAC Address
+        if Ether in packet:
+            data["MAC_Src"] = packet[Ether].src
+            data["MAC_Dst"] = packet[Ether].dst
 
-            if TCP in packet:
-                data["Protocol"] = "TCP"
-                data["Src_Port"] = packet[TCP].sport
-                data["Dst_Port"] = packet[TCP].dport
-                data["Flags"] = packet[TCP].flags
-                data["Window"] = packet[TCP].window
-            elif UDP in packet:
-                data["Protocol"] = "UDP"
-                data["Src_Port"] = packet[UDP].sport
-                data["Dst_Port"] = packet[UDP].dport
-            elif ICMP in packet:
-                data["Protocol"] = "ICMP"
+        # IPv4 or IPv6
+        if IP in packet:
+            data["Protocol"] = packet[IP].proto
+            data["Src_IP"] = packet[IP].src
+            data["Dst_IP"] = packet[IP].dst
+            data["TTL"] = packet[IP].ttl
+        elif IPv6 in packet:
+            data["Protocol"] = packet[IPv6].nh
+            data["Src_IP"] = packet[IPv6].src
+            data["Dst_IP"] = packet[IPv6].dst
+            data["TTL"] = packet[IPv6].hlim  # IPv6 uses hlim instead of ttl
 
+        # Transport Layer
+        if TCP in packet:
+            data["Protocol"] = "TCP"
+            data["Src_Port"] = packet[TCP].sport
+            data["Dst_Port"] = packet[TCP].dport
+            data["Flags"] = packet[TCP].flags
+            data["Window"] = packet[TCP].window
             if Raw in packet:
                 data["Payload_Size"] = len(packet[Raw].load)
-        except Exception as e:
-            print(e)
-            
 
-        #print(data)
-        logfile(data)
+        elif UDP in packet:
+            data["Protocol"] = "UDP"
+            data["Src_Port"] = packet[UDP].sport
+            data["Dst_Port"] = packet[UDP].dport
+            if Raw in packet:
+                data["Payload_Size"] = len(packet[Raw].load)
+
+        elif ICMP in packet:
+            data["Protocol"] = "ICMP"
+            # ICMP does not use ports
+
+    except Exception as e:
+        print(f"Error parsing packet: {e}")
+
+    print(data)
+    logfile(data)
 
 sniff(iface="Wi-Fi", prn=log_packet, store=False)
 

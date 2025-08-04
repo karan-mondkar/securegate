@@ -15,7 +15,8 @@ import os
 
 import subprocess
 import platform
-
+counter_temp=0
+counter_temp2=0
 
 
 import queue
@@ -111,8 +112,8 @@ CREATE TABLE IF NOT EXISTS settings (
 
 """)
             cursor.execute("""CREATE TABLE IF NOT EXISTS network_protocol (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    protocol VARCHAR(10) NOT NULL,  
+    
+    protocol VARCHAR(10) NOT NULL PRIMARY KEY,  
     request_count INT DEFAULT 0,             
     first_seen DATETIME,                     
     last_seen DATETIME                       
@@ -151,6 +152,7 @@ CREATE TABLE IF NOT EXISTS settings (
     
         # Continuously monitor network requests
     def monitor_requests(self):
+        global counter_temp2
         log_file_path = "securegate_detailed_log2.json"
         remaining_lines = []
         try:
@@ -159,6 +161,8 @@ CREATE TABLE IF NOT EXISTS settings (
                     lines = f.readlines()
 
                 for line in lines:
+                    counter_temp2+=1
+                    print("counter temp2  ",counter_temp2)
                     print("Processing line:", line.strip())
                     line = line.strip()
                     try:
@@ -170,7 +174,7 @@ CREATE TABLE IF NOT EXISTS settings (
                         print(f"Error parsing line: {line}\nReason: {e}")
                         remaining_lines.append(line + '\n')  
 
-                print("for loop chya baher")
+                #print("for loop chya baher")
 
                 # After processing, overwrite file with error vale lines
                 with open(log_file_path, "w") as f:
@@ -186,7 +190,7 @@ CREATE TABLE IF NOT EXISTS settings (
             global data,request_queue
             global insertion_time
                 
-            print("Processing")
+            #print("Processing")
             if not request_queue.empty():
                 while not request_queue.empty():
                     try:
@@ -200,23 +204,22 @@ CREATE TABLE IF NOT EXISTS settings (
 
                         insertion_time = datetime.strptime(time, "%Y-%m-%d %H:%M:%S.%f")
                         try:
-                            print("checking wait")
+                            #print("checking wait")
                             self.ips.ins_ip(ip,time)
-                            print("ins_ip")                    
+                            #print("ins_ip")                    
                             self.request.ins_request(request_type,time)
-                            print("ins_request")
+                            #print("ins_request")
                             
                             self.iprequest.ins_iprequest(ip,request_type,network_protocol,time)
-                            print("ins_iprequest")
+                            #print("ins_iprequest")
                             self.network_protocol_class.ins_network_protocol(network_protocol,time)
-                            print("ins_network_protocol")
+                            #print("ins_network_protocol")
                         except Exception as e:
                             print(e)
                     except queue.Empty:
                         print(queue.Empty)
                         continue
-                    finally:
-                        print("Processing end")
+                    
 
     @staticmethod
     
@@ -357,16 +360,19 @@ class IPS:
         self.cursor=cursor
         
     def ins_ip(self,ip,time):
+        global counter_temp
         try:    
-                print("Ip is :-",ip,"    time is   ",time)
+                #print("Ip is :-",ip,"    time is   ",time)
                 query = """ INSERT INTO ip (ip_address,request_time,last_seen) VALUES (%s,%s,%s)
                 ON DUPLICATE KEY UPDATE
                 request_count = request_count + 1,
                 last_seen = VALUES(request_time)
                 """
-                self.cursor.execute(query, (ip,time,time,),multi=True)  
+                self.cursor.execute(query, (ip,time,time,))  
                 self.connection.commit()
-                print("ins ip completed")
+                counter_temp+=1
+                print("counter is :-",counter_temp)
+                #print("ins ip completed")
         except Exception as e:
             print("error insertion :-",e)
      
@@ -514,8 +520,8 @@ class NETWORK_PROTOCOL:
 
 
 
-import sendgrid
-from sendgrid.helpers.mail import Mail, Email, To, Content
+#import sendgrid
+#from sendgrid.helpers.mail import Mail, Email, To, Content
 
 
 import platform
@@ -646,13 +652,13 @@ sys_info=SYS_INFO(ips,request,iprequest,network_protocol,connection,cursor)
 import threading
 
 
-    
+'''
 try:
     geo_thread = threading.Thread(target=sys_info.assign_country, args=(connection,cursor), daemon=True)
-    geo_thread.start()
+    #geo_thread.start()
 except Exception:
     print(Exception)
-
+'''
 
 
 
