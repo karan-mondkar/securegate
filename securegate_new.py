@@ -66,8 +66,7 @@ class SYS_INFO:
             port_number VARCHAR(50) PRIMARY KEY,
             port_name VARCHAR(50),
             request_count INT DEFAULT 1,               
-            request_time DATETIME
-            ,flagged TINYINT(10) DEFAULT 0               
+            request_time DATETIME               
             ,last_seen DATETIME
                            )
             """)
@@ -295,11 +294,13 @@ CREATE TABLE IF NOT EXISTS settings (
                     total_requests = self.cursor.fetchone()[0]
                     
                     for x in ip_counts:
-                        self.checkblk(x,"ip",int(timer))
+                        if len(x) == 2:        
+                                self.checkblk("ip",x,int(ipreqlimit))
                     for x in port_counts:
-                        self.checkblk(x,"port",int(timer))
+                        if len(x) == 2:
+                            self.checkblk("port",x,int(ipreqlimit))
                     # total_requests:
-                    self.checkblk(total_requests,"iprequest",int(timer))
+                #    self.checkblk("iprequest",total_requests,int(timer))
                 #unblock time
         
 
@@ -323,7 +324,7 @@ CREATE TABLE IF NOT EXISTS settings (
         if option=="ip":
             if req>limit:
                 reqps=int(((req-limit)/limit)*100)
-                self.ips.block_ip(ip,reqps)
+                ips.block_ip(ip,reqps)
         if option=="port":
             if req>limit:
                 port=ip  #since ithe port yenar
@@ -377,38 +378,31 @@ class IPS:
             print("error insertion :-",e)
      
     def block_ip(self,ip_address,blkps):
-        print("block ip is:",ip_address)
-        try:
-            
-            if not self.loopback(ip_address):
-                blkmin=int(blkps+blkps*10/100)
-                blocktime= datetime.now()+ timedelta(minutes=blkmin)
-                cursor = self.connection.cursor()
-                #subprocess.run(["sudo", "iptables", "-A", "INPUT", "-s", ip_address, "-j", "DROP"], check=True)    
-                #  IP table
-                self.cursor.execute("UPDATE IP SET is_blocked = 1 , block_time=%s WHERE `ip_address` = %s", (blocktime,ip_address,))
-                #  iprequest_junction table
-                self.cursor.execute("UPDATE iprequest_junction SET is_blocked = 1 WHERE `ip_address` = %s", (ip_address,))
-                #  request_type table 
-                self.cursor.execute("UPDATE request_type SET is_blocked = 1 WHERE `ip_address` = %s", (ip_address,))
-                self.connection.commit()
-                #print(f"IP {ip_address} has been blocked in all tables.")
+        block_list=self.block_list()
+        if ip_address not in block_list:
+            try:
+                
+                #if not self.loopback(ip_address):
+                    blkmin=int(blkps+blkps*10/100)
+                    blocktime= datetime.now()+ timedelta(minutes=blkmin)
+                    cursor = self.connection.cursor()
+                    #subprocess.run(["sudo", "iptables", "-A", "INPUT", "-s", ip_address, "-j", "DROP"], check=True)    
+                    #  IP table
+                    self.cursor.execute("UPDATE IP SET is_blocked = 1 , block_time=%s WHERE `ip_address` = %s", (blocktime,ip_address,))
+                    self.connection.commit()
+                    print(f"IP {ip_address} has been blocked in all tables.")
 
-        except Exception as e:
-            print(f"Error blocking IP: {e}")
+            except Exception as e:
+                print(f"Error blocking IP: {e}")
 
 
     def unblock_ip(self,ip_address):
         try:
             global conn
             cursor = conn.cursor()
-            subprocess.run(["sudo", "iptables", "-D", "INPUT", "-s", ip_address, "-j", "DROP"], check=True)
+            #subprocess.run(["sudo", "iptables", "-D", "INPUT", "-s", ip_address, "-j", "DROP"], check=True)
             #  IP table
             self.cursor.execute("UPDATE IP SET blocked = 0 and block_time=NULL WHERE `ip address` = %s", (ip_address,))
-            #  iprequest_junction table
-            self.cursor.execute("UPDATE iprequest_junction SET blocked = 0 WHERE `ip address` = %s", (ip_address,))
-            #  request_type table 
-            self.cursor.execute("UPDATE request_type SET blocked = 0 WHERE `ip address` = %s", (ip_address,))
             conn.commit()
       
         except Exception as e:
@@ -424,13 +418,19 @@ class IPS:
             print(f"Error: {str(e)}")
     
         
-    def loopback(x):
+    def loopback(self,x):
         loopback=["127.0.0.1",":::1","N/A"]
         if x in loopback:
             return True
         else :
             False
 
+       
+    def block_list(self):
+        query = """ select ip_address from ip WHERE is_blocked=1 """
+        self.cursor.execute(query,)
+        blk_list=self.cursor.fetchall()
+        return blk_list         
 class REQUEST:
     
     def __init__(self,connection,cursor):
@@ -663,8 +663,11 @@ except Exception:
 
 
 while True:
+    print("monitor request")
     sys_info.monitor_requests()
+    print("process")
     sys_info.process()
+    print("check")
     sys_info.check()
 
 
