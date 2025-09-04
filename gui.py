@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 import tkinter as tk
 from tkinter import ttk
 import mysql.connector
@@ -15,6 +14,16 @@ current_page = 0
 rows_per_page = 15
 all_rows = []
 columns = []
+
+
+
+refresh_jobs = []  # List to store job IDs
+
+def clear_all_jobs():
+    global refresh_jobs
+    for job_id in refresh_jobs:
+        root.after_cancel(job_id)
+    refresh_jobs.clear()
 
 
 
@@ -47,6 +56,7 @@ def validate(username,password):
     password=hash_password(password)
     cursor.execute("SELECT %s FROM settings WHERE admin_name = %s", (password,username))
     result = cursor.fetchone()
+    print(result)
     if result:
         validate_user=True
         dashboardshow()
@@ -92,7 +102,7 @@ def hash_password(plain_password):
 
 
 
-def show_pie_chart():
+def show_pie_chart():'''
     blocked = fetch_ips("blocked") or []     
     unblocked = fetch_ips("unblocked") or []
 
@@ -128,7 +138,7 @@ def show_pie_chart():
     for ip, country in unblocked:
         tk.Label(content_frame, text=f"{ip} - {country}", fg='green').pack()
 
-
+    '''
 
 
 global admin_user, email, admin_pass,phone, time_limit, honeypot_ips,max_requests_per_ip, folder_path, allowed_ports, port_services
@@ -180,15 +190,20 @@ def jsonins(tp,data,data2):
 
                 
     elif tp == "rqpt":
-            query = "SELECT request_limit_per_time FROM settings"
-            cursor.execute(query)
+            cursor.execute("SELECT max_request_per_time FROM settings")
             result = cursor.fetchone()
-            
             json_data = result[0]
-            honeypot_dict = json.loads(json_data)
-            honeypot_dict[data] = data2  # data = IP, data2 = info/status
+
+            # Handle NULL/empty JSON
+            if not json_data:
+                honeypot_dict = {}
+            else:
+                honeypot_dict = json.loads(json_data)
+
+            # Insert/update
+            honeypot_dict[str(data)] = data2
             updated_json = json.dumps(honeypot_dict)
-            cursor.execute("UPDATE settings SET honeypot_ips = %s", (updated_json,))
+            cursor.execute("UPDATE settings SET max_request_per_time = %s", (updated_json,))
             conn.commit()
                 
 def ins_honey(IP):
@@ -400,10 +415,7 @@ def update_setting(val):
             cursor.execute(query, (time_limit.get(),))
             connection.commit()
     if val=="max_requests_per_ip":
-            query = """ UPDATE Settings SET max_requests_per_ip = %s  """
-            cursor.execute(query, (max_requests_per_ip.get(),))
-            connection.commit() 
-
+            jsonins("rqpt",interval_var.get(),request_limit_var.get())
 
     if val=="max_requests_per_ip_per_time":
             jsonins("rqpt",interval_var,request_limit_var)
@@ -453,9 +465,11 @@ def datamanage(page):
     if page =="IP Monitor":
        return ["IP","ip address"," request time","count of occur","blocked","block time","local ip","country"] 
     elif page=="Logs":
-       return ["iprequest_junction","id","ip address","port number"," request time","count of occur"] 
+       return ["iprequest_junction","id","ip address","port number","protocol"," request time","count of occur"] 
     elif page=="Port Monitor":
-        return ["request_type","port","service","request count"," request time","is suspicious"]
+        return ["request_type","port","service","request_count"," request time","is suspicious"]
+    elif page=="Protocol Monitor":
+        return ["Network_protocol","protocol","request_count"," first seen","last seen"]
     elif page=="blocked IP":
         return ["blocked IP","blocked ip","request_time","islocal","block interval"]
     elif page=="Setting":
@@ -471,9 +485,12 @@ def blockdatashow():
     all_rows = cursor.fetchall()
     cursor.close()
     return all_rows
+
+
 def data_to_show(page_name):
+        clear_all_jobs()
         database=db()
-        connection=database[0]
+        conn=database[0]
         cursor=database[1]
         # Checking if any admin exists
         cursor.execute("SELECT admin_name, password_hash FROM settings")
@@ -511,6 +528,7 @@ def data_to_show(page_name):
                         all_rows=cursor.fetchall()
                         show_page_data()
 
+
                 else:
                     for widget in content_frame.winfo_children():
                         widget.destroy()
@@ -518,7 +536,12 @@ def data_to_show(page_name):
             #current_page = 0
             cursor.close()
             conn.close()
-
+            print(page_name)
+            if page_name!="Setting":
+                global refresh_jobs
+                # Schedule new job and store its ID
+                job_id = root.after(5000, lambda: data_to_show(page_name))
+                refresh_jobs.append(job_id)
 
 
 
@@ -560,7 +583,7 @@ sidebar.pack(side="left", fill="y")
 content_frame = tk.Frame(root, bg="white")
 content_frame.pack(side="right", expand=True, fill="both")
 
-pages = ["Dashboard", "IP Monitor", "Port Monitor","blocked IP", "Logs","Setting", "Exit"]
+pages = ["Dashboard", "IP Monitor", "Port Monitor","Protocol Monitor","blocked IP", "Logs","Setting", "Exit"]
 
 
 
@@ -581,7 +604,7 @@ def handle_button_click(n):
         # Checking if any admin exists
         cursor.execute("SELECT admin_name FROM settings")
         results = cursor.fetchall()
-
+        print(results)
         if not results:
             settingshow(1)
         if validate_user is not True:
@@ -777,8 +800,8 @@ def show_pie_chart():
 
 
 
-global admin_user, email, admin_pass,phone, time_limit, honeypot_ips,max_requests_per_ip, folder_path, allowed_ports, port_services
-global interval_var, request_limit_var
+#global admin_user, email, admin_pass,phone, time_limit, honeypot_ips,max_requests_per_ip, folder_path, allowed_ports, port_services
+#global interval_var, request_limit_var
 
 
 def fetch_settings_data():
@@ -997,13 +1020,15 @@ def datamanage(page):
     if page=="Dashboard":
         return ["Dashboard"]
     if page =="IP Monitor":
-       return ["IP","ip address"," request time","count of occur","blocked","block time","local ip","country"] 
+       return ["IP","ip address"," request time","count of occur","blocked","block time","local ip","country","last_seen"] 
     elif page=="Logs":
-       return ["iprequest_junction","id","ip address","port number"," request time","count of occur"] 
+       return ["iprequest_junction","id","ip address","port number","Protocol"," request time"] 
     elif page=="Port Monitor":
-        return ["request_type","port","service","request count"," request time","is suspicious"]
+        return ["request_type","port_number","service","request count"," request time","last seen","is suspicious"]
     elif page=="blocked IP":
         return ["blocked IP","blocked ip","request_time","islocal","block interval"]
+    elif page=="Network Protocol Monitor":
+        return ["Network_protocol","protocol","request_count","first seen","last seen"]
     elif page=="Setting":
         return ["Setting"]
     else:
@@ -1017,54 +1042,6 @@ def blockdatashow():
     all_rows = cursor.fetchall()
     cursor.close()
     return all_rows
-def data_to_show(page_name):
-        database=db()
-        connection=database[0]
-        cursor=database[1]
-        # Checking if any admin exists
-        cursor.execute("SELECT admin_name, password_hash FROM settings")
-        results = cursor.fetchall()
-
-        if not results:
-            settingshow(1)
-        else:
-            global all_rows, columns, current_page
-
-            for widget in content_frame.winfo_children():
-                widget.destroy()
-
-                conn = connect_db()
-                cursor = conn.cursor()
-
-                table_info = datamanage(page_name)
-                if table_info:
-                    table_name = table_info[0]
-                    #print(table_name)
-                    columns = table_info[1:]
-                    if table_name=="blocked IP":
-                        all_rows=blockdatashow()
-                        show_page_data()
-
-                    elif table_name=="Dashboard":
-                        dashboardshow()
-                    elif table_name=="Setting":
-                        settingshow(3)
-
-
-
-                    else:
-                        cursor.execute(f"SELECT * FROM {table_name}")
-                        all_rows=cursor.fetchall()
-                        show_page_data()
-
-                else:
-                    for widget in content_frame.winfo_children():
-                        widget.destroy()
-                    
-            #current_page = 0
-            cursor.close()
-            conn.close()
-
 
 
 
@@ -1106,7 +1083,7 @@ sidebar.pack(side="left", fill="y")
 content_frame = tk.Frame(root, bg="white")
 content_frame.pack(side="right", expand=True, fill="both")
 
-pages = ["Dashboard", "IP Monitor", "Port Monitor","blocked IP", "Logs","Setting", "Exit"]
+pages = ["Dashboard", "IP Monitor", "Port Monitor","blocked IP","Network Protocol Monitor", "Logs","Setting", "Exit"]
 
 
 
@@ -1189,7 +1166,5 @@ def show_page_data():
 
 settingshow(2)
 
-
 #  application run krayla
 root.mainloop()
->>>>>>> 4e0420a1ce5deae16857629d48843e14de3ba7d2

@@ -15,6 +15,18 @@ import os
 
 import subprocess
 import platform
+
+
+
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+
+
+
+
+
 counter_temp=0
 counter_temp2=0
 
@@ -133,10 +145,14 @@ CREATE TABLE IF NOT EXISTS settings (
                 di = dict(zip((timer),( iprequestlimit)))
                 json_data = json.dumps(di)
 
-                # Insert JSON into the table
-                query = "INSERT INTO settings(max_requests_per_ip) VALUES (%s)"
-                cursor.execute(query, (json_data,))
-                connection.commit()
+                #Insert JSON into the table
+                cursor.execute("SELECT COUNT(*) FROM settings")
+                (count,) = cursor.fetchone()
+
+                if count != 0:  # Only insert if table is empty
+                    query = "INSERT INTO settings (max_requests_per_ip) VALUES (%s)"
+                    cursor.execute(query, (json_data,))
+                    connection.commit()
 
 
 
@@ -181,7 +197,7 @@ CREATE TABLE IF NOT EXISTS settings (
 
         except Exception as outer_error:
                 print("Fatal error while reading/parsing log file:", outer_error)
-            
+
 
 
            
@@ -195,11 +211,11 @@ CREATE TABLE IF NOT EXISTS settings (
                     try:
                         curr_request = request_queue.get(timeout=1)
                         print(curr_request)
-                        ip=str(curr_request["src_ip"])
-                        time=curr_request["time"]
-                        request_type=str(curr_request["dst_port"])
-                        network_protocol=str(curr_request["protocol"])
-                        destination_ip=str(curr_request["dst_ip"])
+                        ip=str(curr_request["Src_IP"])
+                        time=curr_request["Time"]
+                        request_type=str(curr_request["Dst_Port"])
+                        network_protocol=str(curr_request["Protocol"])
+                        destination_ip=str(curr_request["Dst_IP"])
 
                         insertion_time = datetime.strptime(time, "%Y-%m-%d %H:%M:%S.%f")
                         try:
@@ -261,7 +277,8 @@ CREATE TABLE IF NOT EXISTS settings (
         try:
             cursor.execute("SELECT max_requests_per_ip from settings")
             result = cursor.fetchone()
-            if result:
+
+            if result is not None:
                 json_data = result[0]  # The JSON string
                 reqpertime_dict = json.loads(json_data)  # Convert to Python dictionary
 
@@ -309,7 +326,8 @@ CREATE TABLE IF NOT EXISTS settings (
                 """, (datetime.now(),))
                 rows = self.cursor.fetchall()
                 for ip in rows:
-                    IPS.unblock_ip(ip)
+                    print(ip[0])
+                    self.ips.unblock_ip(ip[0])
                 
                 
         except Exception as e:
@@ -395,15 +413,17 @@ class IPS:
             except Exception as e:
                 print(f"Error blocking IP: {e}")
 
-
     def unblock_ip(self,ip_address):
         try:
-            global conn
-            cursor = conn.cursor()
+            global connection
+            cursor = connection.cursor()
             #subprocess.run(["sudo", "iptables", "-D", "INPUT", "-s", ip_address, "-j", "DROP"], check=True)
             #  IP table
-            self.cursor.execute("UPDATE IP SET blocked = 0 and block_time=NULL WHERE `ip address` = %s", (ip_address,))
-            conn.commit()
+            query = """UPDATE ip 
+                   SET is_blocked = 0, block_time = NULL 
+                   WHERE ip_address = %s"""
+            self.cursor.execute(query, (ip_address,))
+            connection.commit()
       
         except Exception as e:
             print(f"Error blocking IP: {e}")    
@@ -469,7 +489,7 @@ class IPREQUEST:
             print(e)
         #code checking from here
     
-    
+    '''
     def checking(self,ip,request):
         query = """ select * from iprequest_junction WHERE ip_address=%s and port_number = %s    """
         self.cursor.execute(query,(ip,request,))
@@ -477,7 +497,7 @@ class IPREQUEST:
         a=self.cursor.fetchall() 
         #print("\n incremented here",a,"\n")
 
-
+'''
 
 
     
@@ -503,7 +523,7 @@ class NETWORK_PROTOCOL:
         """
         self.cursor.execute(query, (request,time,time,))
         self.connection.commit()
-    
+    '''
     def fetch_network_protocol(self):
         try:
             cursor = self.connection.cursor()
@@ -515,7 +535,7 @@ class NETWORK_PROTOCOL:
             return result
         except Exception:
            return [] 
-
+    '''
 
 
 
@@ -576,7 +596,7 @@ class EMERGENCY_ALERT:
     def set_permissions(file_path):
         """Set the file permissions to 000 (no access)."""
         try:
-            save_permissions(file_path)  # Save current permissions before changing them
+            #save_permissions(file_path)  # Save current permissions before changing them
 
             if platform.system() == 'Windows':
                 # For Windows, use icacls to reset and deny permissions
@@ -598,6 +618,33 @@ class EMERGENCY_ALERT:
 
     restore_permissions(file_path)
 
+    
+
+    def send_email_alert(subject, message):
+        try:
+            # 📧 EMAIL CONFIGURATION
+            SMTP_SERVER = "smtp.gmail.com"   # for gmail service
+            SMTP_PORT = 587
+            SENDER_EMAIL = "your_email@gmail.com"
+            SENDER_PASSWORD = "your_app_password"   # Use App Password, not normal password
+            RECEIVER_EMAIL = "alert_receiver@gmail.com"    
+
+
+            msg = MIMEMultipart()
+            msg["From"] = SENDER_EMAIL
+            msg["To"] = RECEIVER_EMAIL
+            msg["Subject"] = subject
+
+            msg.attach(MIMEText(message, "plain"))
+
+            server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+            server.starttls()
+            server.login(SENDER_EMAIL, SENDER_PASSWORD)
+            server.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, msg.as_string())
+            server.quit()
+            print("[+] Email alert sent successfully!")
+        except Exception as e:
+            print(f"[!] Failed to send email: {e}")
 
 
 

@@ -1,17 +1,14 @@
 import os
 import mysql.connector
 
-# ---------- Step 1: Drop the securegate database ----------
 try:
-    # Connect to MySQL (update with your credentials if needed)
     conn = mysql.connector.connect(
         host="localhost",
         user="root",
-        password=""  # Replace with your actual MySQL root password
+        password="" 
     )
     cursor = conn.cursor()
     
-    # Drop the database
     cursor.execute("DROP DATABASE IF EXISTS securegate")
     print("Database 'securegate' dropped successfully.")
 
@@ -21,7 +18,7 @@ try:
 except mysql.connector.Error as err:
     print(f"Error dropping database: {err}")
 
-# ---------- Step 2: Delete log files ----------
+
 files_to_delete = [
     "securegate_detailed_log1.json",
     "securegate_detailed_log2.json",
