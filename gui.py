@@ -480,7 +480,7 @@ def datamanage(page):
     if page =="IP Monitor":
        return ["IP","ip address"," request time","count of occur","blocked","block time","local ip","country","recent request"] 
     elif page=="Logs":
-       return ["iprequest_junction","id","ip address","port number","protocol"," request time","count of occur"] 
+       return ["iprequest_junction","id","ip address","port number","protocol"," request time"] 
     elif page=="Port Monitor":
         return ["request_type","port","service","request_count"," request time","is suspicious"]
     elif page=="Protocol Monitor":
@@ -502,61 +502,81 @@ def blockdatashow():
     return all_rows
 
 
-def data_to_show(page_name):
-        clear_all_jobs()
-        database=db()
-        conn=database[0]
-        cursor=database[1]
-        # Checking if any admin exists
-        cursor.execute("SELECT admin_name, password_hash FROM settings")
-        results = cursor.fetchall()
-
-        if not results:
-            settingshow(1)
-        else:
-            global all_rows, columns, current_page
-
-            for widget in content_frame.winfo_children():
-                widget.destroy()
-
-                conn = connect_db()
-                cursor = conn.cursor()
-
-                table_info = datamanage(page_name)
-                if table_info:
-                    table_name = table_info[0]
-                    #print(table_name)
-                    columns = table_info[1:]
-                    if table_name=="blocked IP":
-                        all_rows=blockdatashow()
-                        show_page_data()
-
-                    elif table_name=="Dashboard":
-                        dashboardshow()
-                    elif table_name=="Setting":
-                        settingshow(3)
 
 
 
-                    else:
-                        cursor.execute(f"SELECT * FROM {table_name}")
-                        all_rows=cursor.fetchall()
-                        show_page_data()
 
 
-                else:
-                    for widget in content_frame.winfo_children():
-                        widget.destroy()
-                    
-            #current_page = 0
+import threading
+
+def fetch_data_in_thread(page_name):
+    global columns
+    """Function to be run in a separate thread to fetch data."""
+    try:
+        conn = connect_db()
+        cursor = conn.cursor()
+        
+        table_info = datamanage(page_name)
+        fetched_rows = None
+        if table_info:
+            table_name = table_info[0]
+            if table_name == "blocked IP":
+                fetched_rows = blockdatashow()
+            elif table_name == "Dashboard":
+                fetched_rows = "dashboard" # Special signal
+            elif table_name == "Setting":
+                fetched_rows = "settings" # Special signal
+            else:
+                cursor.execute(f"SELECT * FROM {table_name}")
+                fetched_rows = cursor.fetchall()
+        
+        # Use root.after to safely update the GUI from the thread
+        root.after(0, lambda: update_gui_with_data(fetched_rows,table_info[1:], page_name))
+        
+        if conn and conn.is_connected():
             cursor.close()
             conn.close()
-            print(page_name)
-            if page_name!="Setting":
-                global refresh_jobs
-                # Schedule new job and store its ID
-                job_id = root.after(5000, lambda: data_to_show(page_name))
-                refresh_jobs.append(job_id)
+    except Exception as e:
+        print(f"Error in data fetching thread: {e}")
+
+def update_gui_with_data(fetched_rows, cols, page_name):
+    global columns
+    """Function to safely update the GUI with fetched data."""
+    global all_rows, columns, current_page
+    
+    if fetched_rows == "dashboard":
+        dashboardshow()
+        return
+    elif fetched_rows == "settings":
+        settingshow(3)
+        return
+
+    all_rows = fetched_rows if fetched_rows is not None else []
+    columns = cols
+    current_page = 0
+    show_page_data()
+    
+    if page_name != "Setting":
+        global refresh_jobs
+        job_id = root.after(5000, lambda: data_to_show(page_name))
+        refresh_jobs.append(job_id)
+
+def data_to_show(page_name):
+    """Main function called by button clicks."""
+    global validate_user
+    
+    clear_all_jobs()
+    
+    thread = threading.Thread(target=fetch_data_in_thread, args=(page_name,))
+    thread.daemon = True
+    thread.start()
+
+
+
+
+
+
+
 
 
 
@@ -656,6 +676,7 @@ def show_page_data():
 
     # Headers
     for i, col in enumerate(columns):
+        print(columns)
         tk.Label(content_frame, text=col, font=("Arial", 10, "bold"), 
                  relief="solid", borderwidth=1, width=20).grid(row=0, column=i, sticky="nsew", padx=0, pady=0)
 
@@ -665,14 +686,19 @@ def show_page_data():
             tk.Label(content_frame, text=str(cell), 
                      relief="solid", borderwidth=1, width=20).grid(row=row_index + 1, column=col_index, sticky="nsew", padx=0, pady=0)
 
-    # Navigation frame
+    # Determine the correct columnspan value
+    # If columns is empty, set columnspan to 1 to avoid the error.
+    if len(columns) == 0:
+        span = 1
+    else:
+        span = len(columns)
+        
     nav = tk.Frame(content_frame)
-    nav.grid(row=len(rows) + 1, columnspan=len(columns), pady=10)
+    nav.grid(row=len(rows) + 1, columnspan=span, pady=10)
 
     if current_page > 0:
         tk.Button(nav, text="Previous", command=prev_page).pack(side="left", padx=1)
     if end < len(all_rows):
         tk.Button(nav, text="Next", command=next_page).pack(side="left", padx=1)
-
 #  application run krayla
 root.mainloop()
