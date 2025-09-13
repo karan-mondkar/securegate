@@ -15,7 +15,7 @@ rows_per_page = 15
 all_rows = []
 columns = []
 
-
+global connection,cursor
 
 refresh_jobs = []  # List to store job IDs
 
@@ -29,6 +29,7 @@ def clear_all_jobs():
 
 def db():
     try:
+        global connection,cursor
         connection = mysql.connector.connect(
             host="localhost",
             user="root",
@@ -92,6 +93,66 @@ def fetch_ips(tp):
 
 
 
+import requests
+def get_country(ip):
+    try:
+        response = requests.get(f"http://ip-api.com/json/{ip}")
+        data = response.json()
+        if data.get("status") == "fail":
+            return "Unknown"
+        return data.get("country", "Unknown")
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        return "Unknown"
+
+def update_null_countries(conn, cursor):
+    """
+    Finds IPs with a NULL country field and updates them.
+    If the country cannot be determined via the API, it sets the value to 'country not set'.
+    """
+    try:
+        # Find all IPs where the country is NULL
+        cursor.execute("SELECT ip_address FROM ip WHERE country IS NULL")
+        null_ips = cursor.fetchall()
+        
+        if not null_ips:
+            print("No IPs found with a NULL country field.")
+            return
+
+        print(f"Found {len(null_ips)} IPs with a NULL country field. Updating...")
+
+        for ip_tuple in null_ips:
+            ip_address = ip_tuple[0]
+            
+            # Get the country from the API
+            api_country = get_country(ip_address)
+            
+            # Determine the final country value to set
+            if api_country == "Unknown":
+                country_to_set = "country not set"
+            else:
+                country_to_set = api_country
+
+            # Update the database
+            cursor.execute(
+                "UPDATE ip SET country = %s WHERE ip_address = %s",
+                (country_to_set, ip_address)
+            )
+            print(f"Updated IP {ip_address} to country: {country_to_set}")
+
+        conn.commit()
+        print("Successfully updated all countries.")
+        
+    except mysql.connector.Error as err:
+        print(f"Database error: {err}")
+        conn.rollback() # Revert changes if an error occurs
+        
+    finally:
+        if conn and conn.is_connected():
+            cursor.close()
+            conn.close()
+
+
 import bcrypt
 
 def hash_password(plain_password):
@@ -103,44 +164,63 @@ def hash_password(plain_password):
 
 
 
-
-def show_pie_chart():'''
-    blocked = fetch_ips("blocked") or []     
+import collections
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+def show_bar_chart_by_country():
+    blocked = fetch_ips("blocked") or []
     unblocked = fetch_ips("unblocked") or []
 
     for widget in content_frame.winfo_children():
         widget.destroy()
 
-    # Safely get lengths
-    blocked_count = len(blocked)
-    unblocked_count = len(unblocked)
+    # 1. Count IPs by country, filtering out None values
+    blocked_counts = collections.defaultdict(int)
+    for ip, country in blocked:
+        if country is not None:
+            blocked_counts[country] += 1
+    
+    unblocked_counts = collections.defaultdict(int)
+    for ip, country in unblocked:
+        if country is not None:
+            unblocked_counts[country] += 1
+    
+    # 2. Get all unique countries and sort them
+    all_countries = sorted(list(set(blocked_counts.keys()) | set(unblocked_counts.keys())))
+    
+    # 3. Create lists for plotting
+    blocked_values = [blocked_counts[country] for country in all_countries]
+    unblocked_values = [unblocked_counts[country] for country in all_countries]
 
-    if blocked_count == 0 and unblocked_count == 0:
-        tk.Label(content_frame, text="No IP data available to plot.").pack()
-        
-    labels = ['Blocked IPs', 'Unblocked IPs']
-    values = [blocked_count, unblocked_count]
+    # 4. Create the bar chart
+    fig, ax = plt.subplots(figsize=(8, 5))
+    width = 0.35
+    x = range(len(all_countries))
+    
+    rects1 = ax.bar(x, blocked_values, width, label='Blocked', color='red')
+    rects2 = ax.bar([i + width for i in x], unblocked_values, width, label='Unblocked', color='green')
+    
+    ax.set_ylabel('Number of IPs')
+    ax.set_title('Blocked vs Unblocked IPs by Country')
+    ax.set_xticks([i + width / 2 for i in x])
+    ax.set_xticklabels(all_countries, rotation=45, ha='right')
+    ax.legend()
+    fig.tight_layout()
 
-    fig, ax = plt.subplots(figsize=(4, 4))
-    ax.pie(values, labels=labels, autopct='%1.1f%%', startangle=90)
-    ax.set_title("Blocked vs Unblocked IPs")
-    ax.axis('equal')
-
+    # 5. Embed the plot in Tkinter
     canvas = FigureCanvasTkAgg(fig, master=content_frame)
     canvas.draw()
-    canvas.get_tk_widget().pack(pady=20)
+    canvas.get_tk_widget().pack(pady=20, fill="both", expand=True)
 
-    # Show blocked IPs
-    tk.Label(content_frame, text="Blocked IPs:", font=('Arial', 12, 'bold')).pack()
-    for ip, country in blocked:
-        tk.Label(content_frame, text=f"{ip} - {country}", fg='red').pack()
+    # 6. Display a summary below the chart
+    tk.Label(content_frame, text="Summary:", font=('Arial', 12, 'bold')).pack(pady=(10, 0))
+    for country in all_countries:
+        blocked_count = blocked_counts.get(country, 0)
+        unblocked_count = unblocked_counts.get(country, 0)
+        tk.Label(content_frame, text=f"{country}: {blocked_count} Blocked, {unblocked_count} Unblocked").pack()
 
-    # Show unblocked IPs
-    tk.Label(content_frame, text="Unblocked IPs:", font=('Arial', 12, 'bold')).pack(pady=(10, 0))
-    for ip, country in unblocked:
-        tk.Label(content_frame, text=f"{ip} - {country}", fg='green').pack()
 
-    '''
+
 
 
 global admin_user, email, admin_pass,phone, time_limit, honeypot_ips,max_requests_per_ip, folder_path, allowed_ports, port_services
@@ -448,10 +528,10 @@ def update_setting(val):
         connection.commit()
 
 def dashboardshow():
-    
+    global connection,cursor
     for widget in content_frame.winfo_children():
         widget.destroy()
-    show_pie_chart()
+    show_bar_chart_by_country()
     global uname,pswd
     tk.Label(content_frame, text="DASHBOARD", font=("Arial", 18)).pack(pady=10)
     database=db()
@@ -461,6 +541,9 @@ def dashboardshow():
     cursor.execute("SELECT admin_name FROM settings")
     results = cursor.fetchall()
 
+    thread = threading.Thread(target=update_null_countries, args=(connection, cursor))
+    thread.daemon = True # This ensures the thread exits when the main program does
+    thread.start()
 
 
 
@@ -702,3 +785,8 @@ def show_page_data():
         tk.Button(nav, text="Next", command=next_page).pack(side="left", padx=1)
 #  application run krayla
 root.mainloop()
+
+
+
+
+
