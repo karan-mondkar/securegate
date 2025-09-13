@@ -38,6 +38,10 @@ insertion_time=datetime.now()
 
 
 
+
+from scipy.stats import norm
+
+
 class SYS_INFO:
     global request,data
     def __init__(self, ips,request,iprequest,network_protocol,connection,cursor):
@@ -272,7 +276,7 @@ CREATE TABLE IF NOT EXISTS settings (
 
 
 
-    def check(self):
+    def check_suspiciousness(self):
         global insertion_time,timer,ipreqlimit
         try:
             cursor.execute("SELECT max_requests_per_ip from settings")
@@ -294,7 +298,9 @@ CREATE TABLE IF NOT EXISTS settings (
                         """, (time_ago,))
                     ip_counts = self.cursor.fetchall()
 
+                    
 
+                    
                         # Group by Port
                     self.cursor.execute("""
                         SELECT port_number, COUNT(*) as port_count
@@ -304,20 +310,40 @@ CREATE TABLE IF NOT EXISTS settings (
                     """, (time_ago,))
                     port_counts = self.cursor.fetchall()
 
+
+                        # Group by Protocol
+                    self.cursor.execute("""
+                        SELECT protocol, COUNT(*) as network_protocol_count
+                        FROM iprequest_junction
+                        WHERE request_time >= %s
+                        GROUP BY port_number
+                    """, (time_ago,))
+                    network_protocol_counts = self.cursor.fetchall()
+
+
                     # Total count of all requests 
                     self.cursor.execute("""
                         SELECT COUNT(*) FROM iprequest_junction WHERE request_time >= %s
                     """, (time_ago,))
                     total_requests = self.cursor.fetchone()[0]
-                    
+    
                     for x in ip_counts:
                         if len(x) == 2:        
-                                self.checkblk("ip",x,int(ipreqlimit))
+                                self.checkblk("ip",x,int(ipreqlimit),timer)
                     for x in port_counts:
                         if len(x) == 2:
-                            self.checkblk("port",x,int(ipreqlimit))
+                            self.checkblk("port",x,int(ipreqlimit),timer)
+                    
+
+                    #network protocol
+                    for x in network_protocol_counts:
+                        if len(x) == 2:
+                            self.checkblk("network_protocol",x,int(ipreqlimit),timer)
+                    
+
+
                     # total_requests:
-                #    self.checkblk("iprequest",total_requests,int(timer))
+                    self.checkblk("iprequest",total_requests,int(timer),timer)
                 #unblock time
         
 
@@ -332,27 +358,30 @@ CREATE TABLE IF NOT EXISTS settings (
                 
         except Exception as e:
                 print(e)
-
-    def issuspicious(val,self):
-        #ithe nay kay kraychy
-        pass    
-    def checkblk(self,option,ipdata,limit):
-        ip=ipdata[0]
-        req=ipdata[1]
+   
+    def checkblk(self,option,ipdata,limit,time_interval):
+       
+        
         if option=="ip":
-            if req>limit:
+            ip=ipdata[0]
+            req=ipdata[1]
+            if  ips.is_ip_suspicious(req,limit):         #req>limit:
                 reqps=int(((req-limit)/limit)*100)
                 ips.block_ip(ip,reqps)
-        if option=="port":
-            if req>limit:
-                port=ip  #since ithe port yenar
-                self.issupicious(port)
-        if option=="iprequest":
-            count=ip
-            if req>limit:
-                reqps=int(((req-limit)/limit)*100)
-                self.issupicious(count)
+        '''if option=="port":
+            port,port_request=req
+            if request.is_port_suspicious(port_request,limit):
+                request.securegate_response(port,port_request,limit)
             
+            if option=="iprequest":
+                count=ip
+                if iprequest.is_iprequest_suspicious(count,limit):
+                    iprequest.securegate_response(ipdata,limit,time_interval)        
+            if option=="network_protocol":
+                count=ip
+                if network_protocol.is_iprequest_suspicious(count,limit):
+                    network_protocol.securegate_response(ipdata,limit,time_interval)        
+            '''
 
 
 
@@ -403,11 +432,17 @@ class IPS:
                 #if not self.loopback(ip_address):
                     blkmin=int(blkps+blkps*10/100)
                     blocktime= datetime.now()+ timedelta(minutes=blkmin)
+                    print("Blocktime type:", type(blocktime))
+                    print("IP:", repr(ip_address))
                     cursor = self.connection.cursor()
                     #subprocess.run(["sudo", "iptables", "-A", "INPUT", "-s", ip_address, "-j", "DROP"], check=True)    
                     #  IP table
-                    self.cursor.execute("UPDATE IP SET is_blocked = 1 , block_time=%s WHERE `ip_address` = %s", (blocktime,ip_address,))
+                    self.cursor.execute(
+                    "UPDATE `IP` SET is_blocked = 1, block_time=%s WHERE `ip_address`=%s",
+                    (blocktime, ip_address)
+                    )
                     self.connection.commit()
+                    print("Rows affected:", self.cursor.rowcount)
                     print(f"IP {ip_address} has been blocked in all tables.")
 
             except Exception as e:
@@ -451,13 +486,28 @@ class IPS:
         self.cursor.execute(query,)
         blk_list=self.cursor.fetchall()
         return blk_list         
+    
+      
+    def is_ip_suspicious(ip_request_count, mean, confidence_level=0.99):
+        #Returns True if the IP is suspicious 
+        #for me mean means expected request
+        std_dev = 0.1 * mean                                                                        #10% of mean as chosen SD
+        if std_dev == 0:
+            return False
+        z_score = (ip_request_count - mean) / std_dev
+        z_threshold = norm.ppf(confidence_level)
+
+        return z_score > z_threshold  # directly returns True/False
+
+
+
 class REQUEST:
     
     def __init__(self,connection,cursor):
         self.connection=connection
         self.cursor=cursor
         
-
+    
     def ins_request(self,request,time):
         #---ata vrchi request_time chi value ithe assign  hoil
         print(request,time)
@@ -468,6 +518,21 @@ class REQUEST:
         """
         self.cursor.execute(query, (request,time,time))  
         self.connection.commit()
+
+
+
+    def is_request_suspicious(count,limit):
+        pass
+    def securegate_response(protocol,limit,time_interval):
+        pass        
+                   
+           
+
+
+
+
+
+
 
 
      
@@ -489,6 +554,12 @@ class IPREQUEST:
             print(e)
         #code checking from here
     
+    def is_iprequest_suspicious(count,limit):
+            pass
+    def securegate_response(ipdata,limit,time_interval):        
+            pass 
+
+    
     '''
     def checking(self,ip,request):
         query = """ select * from iprequest_junction WHERE ip_address=%s and port_number = %s    """
@@ -498,6 +569,7 @@ class IPREQUEST:
         #print("\n incremented here",a,"\n")
 
 '''
+
 
 
     
@@ -523,6 +595,8 @@ class NETWORK_PROTOCOL:
         """
         self.cursor.execute(query, (request,time,time,))
         self.connection.commit()
+
+    
     '''
     def fetch_network_protocol(self):
         try:
@@ -536,7 +610,10 @@ class NETWORK_PROTOCOL:
         except Exception:
            return [] 
     '''
-
+    def is_request_suspicious(count,limit):
+        pass
+    def securegate_response(network_protocol,limit,time_interval):
+        pass     
 
 
 
@@ -715,7 +792,7 @@ while True:
     print("process")
     sys_info.process()
     print("check")
-    sys_info.check()
+    sys_info.check_suspiciousness()
 
 
 

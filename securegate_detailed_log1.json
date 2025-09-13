@@ -1,0 +1,16 @@
+{"Time": "2025-09-13 20:30:49.578530", "Protocol": "UDP", "Src_IP": "192.168.43.96", "Src_Port": 55552, "Dst_IP": "192.168.43.1", "Dst_Port": 53, "Flags": "N/A", "TTL": 128, "Window": "N/A", "Payload_Size": 0, "MAC_Src": "10:91:d1:25:76:69", "MAC_Dst": "22:79:f3:43:f9:d7"}
+{"Time": "2025-09-13 20:30:49.578530", "Src_IP": "192.168.43.96", "Dst_IP": "192.168.43.1", "Protocol": "UDP", "Dst_Port": "53"}
+{"Time": "2025-09-13 20:30:49.578729", "Protocol": "UDP", "Src_IP": "2409:4042:6e98:2104:c34:cdc9:f456:6aa", "Src_Port": 55552, "Dst_IP": "2409:4042:6e98:2104::5a", "Dst_Port": 53, "Flags": "N/A", "TTL": 64, "Window": "N/A", "Payload_Size": 0, "MAC_Src": "10:91:d1:25:76:69", "MAC_Dst": "22:79:f3:43:f9:d7"}
+{"Time": "2025-09-13 20:30:49.578729", "Src_IP": "2409:4042:6e98:2104:c34:cdc9:f456:6aa", "Dst_IP": "2409:4042:6e98:2104::5a", "Protocol": "UDP", "Dst_Port": "53"}
+{"Time": "2025-09-13 20:30:49.672872", "Protocol": "UDP", "Src_IP": "2409:4042:6e98:2104::5a", "Src_Port": 53, "Dst_IP": "2409:4042:6e98:2104:c34:cdc9:f456:6aa", "Dst_Port": 55552, "Flags": "N/A", "TTL": 64, "Window": "N/A", "Payload_Size": 0, "MAC_Src": "22:79:f3:43:f9:d7", "MAC_Dst": "10:91:d1:25:76:69"}
+{"Time": "2025-09-13 20:30:49.672872", "Src_IP": "2409:4042:6e98:2104::5a", "Dst_IP": "2409:4042:6e98:2104:c34:cdc9:f456:6aa", "Protocol": "UDP", "Dst_Port": "55552"}
+{"Time": "2025-09-13 20:30:50.349515", "Protocol": "TCP", "Src_IP": "140.82.113.22", "Src_Port": 443, "Dst_IP": "192.168.43.96", "Dst_Port": 58071, "Flags": "PA", "TTL": 44, "Window": 68, "Payload_Size": 24, "MAC_Src": "22:79:f3:43:f9:d7", "MAC_Dst": "10:91:d1:25:76:69"}
+{"Time": "2025-09-13 20:30:50.349515", "Src_IP": "140.82.113.22", "Dst_IP": "192.168.43.96", "Protocol": "TCP", "Dst_Port": "58071"}
+{"Time": "2025-09-13 20:30:50.349515", "Protocol": "TCP", "Src_IP": "140.82.113.22", "Src_Port": 443, "Dst_IP": "192.168.43.96", "Dst_Port": 58071, "Flags": "FA", "TTL": 44, "Window": 68, "Payload_Size": 0, "MAC_Src": "22:79:f3:43:f9:d7", "MAC_Dst": "10:91:d1:25:76:69"}
+{"Time": "2025-09-13 20:30:50.349515", "Src_IP": "140.82.113.22", "Dst_IP": "192.168.43.96", "Protocol": "TCP", "Dst_Port": "58071"}
+{"Time": "2025-09-13 20:30:50.349658", "Protocol": "TCP", "Src_IP": "192.168.43.96", "Src_Port": 58071, "Dst_IP": "140.82.113.22", "Dst_Port": 443, "Flags": "A", "TTL": 128, "Window": 255, "Payload_Size": 0, "MAC_Src": "10:91:d1:25:76:69", "MAC_Dst": "22:79:f3:43:f9:d7"}
+{"Time": "2025-09-13 20:30:50.349658", "Src_IP": "192.168.43.96", "Dst_IP": "140.82.113.22", "Protocol": "TCP", "Dst_Port": "443"}
+{"Time": "2025-09-13 20:30:50.933670", "Protocol": "Unknown", "Src_IP": "N/A", "Src_Port": "N/A", "Dst_IP": "N/A", "Dst_Port": "N/A", "Flags": "N/A", "TTL": "N/A", "Window": "N/A", "Payload_Size": 0, "MAC_Src": "22:79:f3:43:f9:d7", "MAC_Dst": "10:91:d1:25:76:69"}
+{"Time": "2025-09-13 20:30:50.933670", "Src_IP": "N/A", "Dst_IP": "N/A", "Protocol": "Unknown", "Dst_Port": "N/A"}
+{"Time": "2025-09-13 20:30:50.933738", "Protocol": "Unknown", "Src_IP": "N/A", "Src_Port": "N/A", "Dst_IP": "N/A", "Dst_Port": "N/A", "Flags": "N/A", "TTL": "N/A", "Window": "N/A", "Payload_Size": 0, "MAC_Src": "10:91:d1:25:76:69", "MAC_Dst": "22:79:f3:43:f9:d7"}
+{"Time": "2025-09-13 20:30:50.933738", "Src_IP": "N/A", "Dst_IP": "N/A", "Protocol": "Unknown", "Dst_Port": "N/A"}
