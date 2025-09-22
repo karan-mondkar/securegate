@@ -7,6 +7,7 @@ import time
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
 import json
+from tkinter import ttk
 
 
 validate_user=False
@@ -35,7 +36,7 @@ def db():
             user="root",
             password="",
             database="securegate"
-             ,autocommit=True   # ✅ no transaction stays open
+             ,autocommit=True   
         )
         cursor = connection.cursor()
         return (connection,cursor)
@@ -68,6 +69,64 @@ def validate(username,password):
         messagebox.showerror(message="LOGIN FAILED")
 
 
+
+
+
+
+
+
+
+def custom_askyesno(title, message):
+    result = [False]
+    dialog = tk.Toplevel()
+    dialog.title(title)
+    dialog.configure(bg="#2E2E2E") 
+    dialog.geometry("400x180")
+    dialog.resizable(False, False)
+    dialog.transient(root)
+    dialog.grab_set()
+    style = ttk.Style()
+    style.configure("Yes.TButton", font=("Helvetica", 12, "bold"), background="#4CAF50", foreground="black")
+    style.map("Yes.TButton", background=[('active', '#45a049')])
+    
+    style.configure("No.TButton", font=("Helvetica", 12), background="#f44336", foreground="black")
+    style.map("No.TButton", background=[('active', '#e53935')])
+    def on_yes():
+        result[0] = True
+        dialog.destroy()
+
+    def on_no():
+        result[0] = False
+        dialog.destroy()
+    main_frame = tk.Frame(dialog, bg="#2E2E2E")
+    main_frame.pack(expand=True, fill="both", padx=20, pady=20)
+    
+    message_label = tk.Label(
+        main_frame,
+        text=message,
+        font=("Helvetica", 14),
+        wraplength=360, 
+        justify="center",
+        bg="#2E2E2E",
+        fg="white"
+    )
+    message_label.pack(pady=(0, 25))
+
+    button_frame = tk.Frame(main_frame, bg="#2E2E2E")
+    button_frame.pack()
+
+    yes_button = ttk.Button(button_frame, text="Yes, Confirm", style="Yes.TButton", command=on_yes)
+    yes_button.pack(side="left", padx=10, ipady=5)
+    
+    no_button = ttk.Button(button_frame, text="No, Cancel", style="No.TButton", command=on_no)
+    no_button.pack(side="left", padx=10, ipady=5)
+
+    root.wait_window(dialog)
+
+    return result[0]
+
+
+
 def fetch_ips(tp):
     try:
         connection = mysql.connector.connect(
@@ -75,7 +134,7 @@ def fetch_ips(tp):
             user="root",
             password="",
             database="securegate"
-         ,autocommit=True   # ✅ no transaction stays open
+         ,autocommit=True  
         )
         cursor = connection.cursor()
 
@@ -127,13 +186,7 @@ def update_null_countries(conn, cursor):
             # Get the country from the API
             api_country = get_country(ip_address)
             
-            # Determine the final country value to set
-            if api_country == "Unknown":
-                country_to_set = "country not set"
-            else:
-                country_to_set = api_country
-
-            # Update the database
+            country_to_set = api_country
             cursor.execute(
                 "UPDATE ip SET country = %s WHERE ip_address = %s",
                 (country_to_set, ip_address)
@@ -145,7 +198,7 @@ def update_null_countries(conn, cursor):
         
     except mysql.connector.Error as err:
         print(f"Database error: {err}")
-        conn.rollback() # Revert changes if an error occurs
+        conn.rollback() 
         
     finally:
         if conn and conn.is_connected():
@@ -167,6 +220,7 @@ def hash_password(plain_password):
 import collections
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
 def show_bar_chart_by_country():
     blocked = fetch_ips("blocked") or []
     unblocked = fetch_ips("unblocked") or []
@@ -174,56 +228,83 @@ def show_bar_chart_by_country():
     for widget in content_frame.winfo_children():
         widget.destroy()
 
-    # 1. Count IPs by country, filtering out None values
     blocked_counts = collections.defaultdict(int)
     for ip, country in blocked:
-        if country is not None:
-            blocked_counts[country] += 1
-    
+        # Normalize country names: handle None, empty strings, and whitespace
+        if country is None or str(country).strip() == "":
+            country_name = "Unknown"
+        else:
+            country_name = str(country).strip() # Ensure it's a string and strip whitespace
+        blocked_counts[country_name] += 1
+
     unblocked_counts = collections.defaultdict(int)
     for ip, country in unblocked:
-        if country is not None:
-            unblocked_counts[country] += 1
-    
-    # 2. Get all unique countries and sort them
-    all_countries = sorted(list(set(blocked_counts.keys()) | set(unblocked_counts.keys())))
-    
-    # 3. Create lists for plotting
-    blocked_values = [blocked_counts[country] for country in all_countries]
-    unblocked_values = [unblocked_counts[country] for country in all_countries]
+        # Normalize country names
+        if country is None or str(country).strip() == "":
+            country_name = "Unknown"
+        else:
+            country_name = str(country).strip()
+        unblocked_counts[country_name] += 1
 
-    # 4. Create the bar chart
-    fig, ax = plt.subplots(figsize=(8, 5))
+    all_countries = sorted(list(set(blocked_counts.keys()) | set(unblocked_counts.keys())))
+
+    # Handle the case where there's no data at all
+    if not all_countries:
+        tk.Label(content_frame, text="No country data available to display chart.", font=("Arial", 14)).pack(pady=20)
+        return
+
+    blocked_values = [blocked_counts.get(country, 0) for country in all_countries]
+    unblocked_values = [unblocked_counts.get(country, 0) for country in all_countries]
+
+    fig, ax = plt.subplots(figsize=(10, 6)) # Increased figure size slightly for better readability
     width = 0.35
     x = range(len(all_countries))
-    
+
     rects1 = ax.bar(x, blocked_values, width, label='Blocked', color='red')
     rects2 = ax.bar([i + width for i in x], unblocked_values, width, label='Unblocked', color='green')
-    
+
     ax.set_ylabel('Number of IPs')
     ax.set_title('Blocked vs Unblocked IPs by Country')
     ax.set_xticks([i + width / 2 for i in x])
-    ax.set_xticklabels(all_countries, rotation=45, ha='right')
+    ax.set_xticklabels(all_countries, rotation=45, ha='right') # Rotate labels for better fit
     ax.legend()
-    fig.tight_layout()
+    fig.tight_layout() # Adjust layout to prevent labels from overlapping
 
-    # 5. Embed the plot in Tkinter
     canvas = FigureCanvasTkAgg(fig, master=content_frame)
     canvas.draw()
     canvas.get_tk_widget().pack(pady=20, fill="both", expand=True)
 
-    # 6. Display a summary below the chart
-    tk.Label(content_frame, text="Summary:", font=('Arial', 12, 'bold')).pack(pady=(10, 0))
+    # --- Treeview Section ---
+    summary_frame = ttk.Frame(content_frame)
+    summary_frame.pack(fill='both', expand=True, padx=10, pady=5)
+
+    columns = ('country', 'blocked', 'unblocked')
+    tree = ttk.Treeview(summary_frame, columns=columns, show='headings', height=7)
+
+    tree.heading('country', text='Country')
+    tree.column('country', anchor='w', width=150)
+
+    tree.heading('blocked', text='Blocked')
+    tree.column('blocked', anchor='center', width=80)
+
+    tree.heading('unblocked', text='Unblocked')
+    tree.column('unblocked', anchor='center', width=80)
+
+    scrollbar = ttk.Scrollbar(summary_frame, orient='vertical', command=tree.yview)
+    tree.configure(yscrollcommand=scrollbar.set)
+
+    scrollbar.pack(side='right', fill='y')
+    tree.pack(side='left', fill='both', expand=True)
+
     for country in all_countries:
         blocked_count = blocked_counts.get(country, 0)
         unblocked_count = unblocked_counts.get(country, 0)
-        tk.Label(content_frame, text=f"{country}: {blocked_count} Blocked, {unblocked_count} Unblocked").pack()
+        tree.insert('', 'end', values=(country, blocked_count, unblocked_count))
 
 
 
 
-
-global admin_user, email, admin_pass,phone, time_limit, honeypot_ips,max_requests_per_ip, folder_path, allowed_ports, port_services
+global admin_user, email, admin_pass,phone, time_limit, honeypot_ips,max_requests_per_ip, folder_path, allowed_ports, port_services,form_container
 global interval_var, request_limit_var
 
 
@@ -270,36 +351,48 @@ def jsonins(tp,data,data2):
         cursor.execute(query, (json_data,))
         conn.commit()
 
-                
     elif tp == "rqpt":
-           
-            cursor.execute("SELECT max_requests_per_ip FROM settings limit 1")
-            result = cursor.fetchone()
-            json_data = result[0]
-            # Handle NULL/empty JSON
-            if not json_data:
-                honeypot_dict = {}
-            else:
-                honeypot_dict = json.loads(json_data)
+        cursor.execute("SELECT max_requests_per_ip FROM settings limit 1")
+        result = cursor.fetchone()
+        json_data = result[0] if result else None
+        honeypot_dict = json.loads(json_data) if json_data else {}
 
-
-            # Check if key already exists
-            if str(data) in honeypot_dict:
-                existing_value = honeypot_dict[str(data)]
-                overwrite = messagebox.askyesno(
+        key = str(data)
+        new_value = data2
+        
+        should_save_to_db = True 
+        
+        if key in honeypot_dict:
+            existing_value = honeypot_dict[key]
+            overwrite = messagebox.askyesno(
                 "Duplicate Entry",
-                f"Key '{data}' already exists with value: {existing_value}\n"
-                f"Do you want to overwrite it with '{data2}'?"
-                )
-            # Insert/update
-            honeypot_dict[str(data)] = data2
-            updated_json = json.dumps(honeypot_dict)
+                icon=messagebox.WARNING,
+                message=f"The key '{key}' already exists.",
+                detail=f"Its current value is '{existing_value}'.\n\nDo you want to overwrite it with '{new_value}'?"
+            )
+            
+            if overwrite:
+                honeypot_dict[key] = new_value
+            else:
+                should_save_to_db = False
+                print("Update cancelled by user.")
 
-            cursor.execute("UPDATE settings SET max_requests_per_ip  = %s   limit 1", (updated_json,))
-            print("ith prynt working 3")
+        else:
+            honeypot_dict[key] = new_value
+            print(f"New key '{key}' added.")
+
+        if should_save_to_db:
+            # Convert the dictionary back to a JSON string
+            updated_json = json.dumps(honeypot_dict)
+            
+            # Execute the update with the properly formatted JSON string
+            cursor.execute("UPDATE settings SET max_requests_per_ip = %s limit 1", (updated_json,))
             conn.commit()
-            cursor.close()
-            conn.close()
+            print("Database has been updated.")
+        
+    cursor.close()
+    conn.close()
+
 def ins_honey(IP):
     dt=db()
     conn=dt[0]
@@ -326,7 +419,7 @@ def ins_honey(IP):
 
 
 def settingshow(setnum):
-    global admin_user, email, admin_pass,phone,max_requests_per_ip, time_limit, honeypot_ips, folder_path, allowed_ports, port_services
+    global admin_user, email, admin_pass,phone,max_requests_per_ip, time_limit, honeypot_ips, folder_path, allowed_ports, port_services,form_container
     global interval_var, request_limit_var ,port,service
 
 
@@ -339,152 +432,135 @@ def settingshow(setnum):
     for widget in content_frame.winfo_children():
         widget.destroy()
     if setnum == 1:
-        tk.Label(content_frame, text="Admin Username").pack(pady=5)
-        admin_user = tk.Entry(content_frame)
+        sidebar.pack_forget()
+        form_container = ttk.Frame(root, padding="10")
+        form_container.pack(expand=True)
+        settings_group = ttk.LabelFrame(form_container, text="Admin Account Setup", padding="15 10")
+        settings_group.grid(row=0, column=0, sticky="ew")
+        settings_group.columnconfigure(1, weight=1)
 
-        admin_user.pack(pady=5)
-        tk.Label(content_frame, text="Admin Email").pack(pady=5)
-        email = tk.Entry(content_frame)
-        email.pack(pady=5)
+        ttk.Label(settings_group, text="Admin Username").grid(row=0, column=0, padx=5, pady=10, sticky="w")
+        admin_user = ttk.Entry(settings_group, width=30)
+        admin_user.grid(row=0, column=1, padx=5, pady=10, sticky="ew")
 
-        tk.Label(content_frame, text="Admin Password").pack(pady=5)
-        admin_pass = tk.Entry(content_frame, show="*")
-        admin_pass.pack(pady=5)
+        ttk.Label(settings_group, text="Admin Email").grid(row=1, column=0, padx=5, pady=10, sticky="w")
+        email = ttk.Entry(settings_group)
+        email.grid(row=1, column=1, padx=5, pady=10, sticky="ew")
 
-        tk.Button(content_frame, text="Confirm Settings", command=lambda: update_setting("sign in"), bg="green", fg="white").pack(pady=15)
+        ttk.Label(settings_group, text="Admin Password").grid(row=2, column=0, padx=5, pady=10, sticky="w")
+        admin_pass = ttk.Entry(settings_group, show="*")
+        admin_pass.grid(row=2, column=1, padx=5, pady=10, sticky="ew")
+        
+        ttk.Label(settings_group, text="Confirm Password").grid(row=3, column=0, padx=5, pady=10, sticky="w")
+        confirm_pass = ttk.Entry(settings_group, show="*")
+        confirm_pass.grid(row=3, column=1, padx=5, pady=10, sticky="ew")
+
+        confirm_button = ttk.Button(form_container, text="Confirm Settings", command=lambda: update_setting("sign in"))
+        confirm_button.grid(row=1, column=0, pady=20)
     if setnum==2:
+        sidebar.pack_forget()
         database=db()
         connection=database[0]
         cursor=database[1]
-        # Checking if any admin exists
         cursor.execute("SELECT admin_name, password_hash FROM settings")
         results = cursor.fetchall()
 
         if not results:
             settingshow(1)
         else:
-            tk.Label(content_frame, text="Username").pack(pady=5)
-            admin_user = tk.Entry(content_frame)
-            admin_user.pack(pady=5)
-            tk.Label(content_frame, text="Password").pack(pady=5)
-            admin_pass = tk.Entry(content_frame, show="*")
-            admin_pass.pack(pady=5)
+            login_container = ttk.Frame(content_frame)
+            login_container.pack(expand=True)
 
-            tk.Button(content_frame, text="Submit", command=lambda: validate(admin_user.get(),admin_pass.get()), bg="green", fg="white").pack(pady=15)
+            login_group = ttk.LabelFrame(login_container, text="Admin Login", padding=(20, 10))
+            login_group.pack(padx=20, pady=20)
 
+            login_group.columnconfigure(1, weight=1)
 
+            ttk.Label(login_group, text="Username:").grid(row=0, column=0, padx=10, pady=10, sticky="w")
+            admin_user = ttk.Entry(login_group, width=30, font=("Helvetica", 11))
+            admin_user.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
+
+            ttk.Label(login_group, text="Password:").grid(row=1, column=0, padx=10, pady=10, sticky="w")
+            admin_pass = ttk.Entry(login_group, show="*", font=("Helvetica", 11))
+            admin_pass.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
+            
+            submit_button = ttk.Button(login_container, 
+                                    text="Submit", 
+                                    command=lambda: validate(admin_user.get(), admin_pass.get()))
+            submit_button.pack(pady=(0, 20), ipady=5)
+            
     if setnum == 3:
-            result = fetch_settings_data()
+        
+        style = ttk.Style()
+        style.configure("TLabelFrame.Label", font=("Helvetica", 12, "bold"))
 
-            # Fetch previous values safely
-            prev_phone = result[0] 
-            prev_time_limit = result[1] 
-            prev_max_requests = result[2] 
-            prev_honeypots = result[3]
-            prev_sensative_folder = result[4]
+        settings_container = ttk.Frame(content_frame, padding=10)
+        settings_container.pack(fill="both", expand=True)
 
-            
-            # Grid layout row tracker
-            row = 0
+        general_group = ttk.LabelFrame(settings_container, text="General", padding=15)
+        general_group.pack(fill="x", padx=10, pady=5)
+        general_group.columnconfigure(1, weight=1)
+        
+        ttk.Label(general_group, text="Admin Mobile Number:").grid(row=0, column=0, padx=5, pady=8, sticky='w')
+        phone = ttk.Entry(general_group)
+        phone.grid(row=0, column=1, padx=5, pady=8, sticky='ew')
+        ttk.Button(general_group, text="Update", command=lambda: update_setting("phone")).grid(row=0, column=2, padx=5, pady=8)
+        limit_group = ttk.LabelFrame(settings_container, text="Rate Limiting", padding=15)
+        limit_group.pack(fill="x", padx=10, pady=5)
+        limit_group.columnconfigure(1, weight=1)
 
-            # --- Admin Phone ---
-            tk.Label(content_frame, text="Admin Mobile Number").grid(row=row, column=0, padx=5, pady=5, sticky='w')
-            phone = tk.Entry(content_frame)
-            phone.grid(row=row, column=1, padx=5, pady=5)
-            tk.Button(content_frame, text="Submit", command=lambda: update_setting("phone")).grid(row=row, column=2, padx=5, pady=5)
-            row += 1
+        ttk.Label(limit_group, text="Time Interval (minutes):").grid(row=0, column=0, padx=5, pady=8, sticky='w')
+        interval_var = tk.StringVar()
+        interval_options = [1, 2, 3, 4, 5, 10, 30, 60, 120]
+        interval_menu = ttk.Combobox(limit_group, textvariable=interval_var, values=interval_options, state="readonly")
+        interval_menu.grid(row=0, column=1, padx=5, pady=8, sticky='ew')
 
-            # --- Request Time Limit ---
-            tk.Label(content_frame, text="Request Time Limit (in minutes)").grid(row=row, column=0, padx=5, pady=5, sticky='w')
-            time_limit = tk.Entry(content_frame)
-            time_limit.grid(row=row, column=1, padx=5, pady=5)
-            tk.Button(content_frame, text="Submit", command=lambda: update_setting("request_time_limit")).grid(row=row, column=2, padx=5, pady=5)
-            row += 1
-            
-            # --- Max Requests Per IP ---
-            tk.Label(content_frame, text="Max Requests Per IP (per hour)").grid(row=row, column=0, padx=5, pady=5, sticky='w')
-            max_requests_per_ip = tk.Entry(content_frame)
-            max_requests_per_ip.grid(row=row, column=1, padx=5, pady=5)
-            
-            tk.Button(content_frame, text="Submit", command=lambda: update_setting("max_requests_per_ip")).grid(row=row, column=2, padx=5, pady=5)
-            row += 1
+        ttk.Label(limit_group, text="IP Request Limit (per interval):").grid(row=1, column=0, padx=5, pady=8, sticky='w')
+        request_limit_var = tk.StringVar()
+        request_limit_options = [10, 20, 30, 40, 50, 100, 300, 600, 1000, 1400, 2000]
+        limit_menu = ttk.Combobox(limit_group, textvariable=request_limit_var, values=request_limit_options, state="readonly")
+        limit_menu.grid(row=1, column=1, padx=5, pady=8, sticky='ew')
+        ttk.Button(limit_group, text="Update", command=lambda: update_setting("max_requests_per_ip")).grid(row=1, column=2, padx=5, pady=8)
 
+        ttk.Label(limit_group, text="Max Requests Per IP (legacy):").grid(row=2, column=0, padx=5, pady=8, sticky='w')
+        max_requests_per_ip = ttk.Entry(limit_group)
+        max_requests_per_ip.grid(row=2, column=1, padx=5, pady=8, sticky='ew')
+        ttk.Button(limit_group, text="Update", command=lambda: update_setting("max_requests_per_ip")).grid(row=2, column=2, padx=5, pady=8)
+        
+        security_group = ttk.LabelFrame(settings_container, text="Security & Network", padding=15)
+        security_group.pack(fill="x", padx=10, pady=5)
+        security_group.columnconfigure(1, weight=1)
+        
+        ttk.Label(security_group, text="Honeypot IPs:").grid(row=0, column=0, padx=5, pady=8, sticky='w')
+        honeypot_ips = ttk.Entry(security_group)
+        honeypot_ips.grid(row=0, column=1, padx=5, pady=8, sticky='ew')
+        ttk.Button(security_group, text="Update", command=lambda: update_setting("honeypot_ips")).grid(row=0, column=2, padx=5, pady=8)
 
-            # --- Honeypot IPs ---
-            tk.Label(content_frame, text="Honeypot IPs (comma-separated)").grid(row=row, column=0, padx=5, pady=5, sticky='w')
-            honeypot_ips = tk.Entry(content_frame)
-            honeypot_ips.grid(row=row, column=1, padx=5, pady=5)
-            
-            tk.Button(content_frame, text="Submit", command=lambda: update_setting("honeypot_ips")).grid(row=row, column=2, padx=5, pady=5)
-            row += 1
-
-            # --- Folder Path ---
-            tk.Label(content_frame, text="Encrypted Folder Path(s)").grid(row=row, column=0, padx=5, pady=5, sticky='w')
-            folder_path = tk.Entry(content_frame)
-            folder_path.grid(row=row, column=1, padx=5, pady=5)
-            tk.Button(content_frame, text="Submit", command=lambda: update_setting("folder_path")).grid(row=row, column=2, padx=5, pady=5)
-            row += 1
-
-            # --- Allowed Ports ---
-            tk.Label(content_frame, text="Allowed Ports (JSON format)").grid(row=row, column=0, padx=5, pady=5, sticky='w')
-            allowed_ports = tk.Entry(content_frame)
-            allowed_ports.grid(row=row, column=1, padx=5, pady=5)
-            tk.Button(content_frame, text="Submit", command=lambda: update_setting("allowed_ports")).grid(row=row, column=2, padx=5, pady=5)
-            row += 1
-
-            # --- Port Service ---
-            tk.Label(content_frame, text="Port").grid(row=row, column=0, padx=5, pady=5, sticky='w')
-            port = tk.Entry(content_frame)
-            port.grid(row=row, column=1, padx=5, pady=5)
-            row += 1
-
-            tk.Label(content_frame, text="Service").grid(row=row, column=0, padx=5, pady=5, sticky='w')
-            service = tk.Entry(content_frame)
-            service.grid(row=row, column=1, padx=5, pady=5)
-            tk.Button(content_frame, text="Submit", command=lambda: update_setting("port_info")).grid(row=row, column=3, padx=5, pady=5)
-
-
-            row += 1
-
-            # --- Time Interval ---
-            tk.Label(content_frame, text="Select Time Interval (minutes):").grid(row=row, column=0, padx=5, pady=5, sticky='w')
-            interval_var = tk.StringVar()
-            interval_options = [1, 2, 3, 4, 5, 10, 30, 60, 120]
-            interval_menu = ttk.Combobox(content_frame, textvariable=interval_var, values=interval_options)
-            interval_menu.grid(row=row, column=1, padx=5, pady=5)
-            row += 1
-            # --- IP Request Limit ---
-            tk.Label(content_frame, text="Set IP Request Limit (per hour):").grid(row=row, column=0, padx=5, pady=5, sticky='w')
-            request_limit_var = tk.StringVar()
-            request_limit_options = [10, 20, 30, 40, 50, 100, 300, 600, 1000, 1400, 2000]
-            limit_menu = ttk.Combobox(content_frame, textvariable=request_limit_var, values=request_limit_options)
-            limit_menu.grid(row=row, column=1, padx=5, pady=5)
-            tk.Button(content_frame, text="Insert", command=lambda: update_setting("max_requests_per_ip")).grid(row=row, column=2, padx=5, pady=5)
-
-
-
-            prev_hist={phone:prev_phone,time_limit:prev_time_limit,
-                       max_requests_per_ip:prev_max_requests,
-                       honeypot_ips:prev_honeypots,
-                       folder_path:prev_sensative_folder
-                       }
-            for key,val in prev_hist.items():
-                if val!=None:
-                    key.insert(0,val) 
-
+        result = fetch_settings_data()
+        prev_phone, prev_time_limit, prev_max_requests, prev_honeypots, prev_sensative_folder = result[:5] if result else (None, None, None, None, None)
+        
+        prev_hist = {
+            phone: prev_phone,
+            max_requests_per_ip: prev_max_requests,
+            honeypot_ips: prev_honeypots,
+        }
+        
+        for widget, value in prev_hist.items():
+            if value is not None:
+                widget.insert(0, value)
 
 
 
 
 def update_setting(val):
-    global admin_user, email, admin_pass,phone, time_limit, honeypot_ips, folder_path, allowed_ports, port_services
+    global admin_user, email,form_container, admin_pass,phone, time_limit, honeypot_ips, folder_path, allowed_ports, port_services
     global interval_var, request_limit_var,port,service
     dt=db()
     connection=dt[0]
     cursor=dt[1]
-          
+    
     if val=="sign in":
-            a=messagebox.askyesno("confirm", "Are you sure you want to confirm it")
+            a=custom_askyesno("Admin Registration","Do you want to confirm it")
             if a:
                 admin=admin_user.get()                
                 em=email.get()
@@ -494,6 +570,8 @@ def update_setting(val):
                 connection.commit()
 
                 dashboardshow()
+                if form_container:
+                    form_container.destroy()
                 validate_user=True    
     if val=="phone":
             print("yess")
@@ -528,33 +606,30 @@ def update_setting(val):
         connection.commit()
 
 def dashboardshow():
+    sidebar.pack()
     global connection,cursor
     for widget in content_frame.winfo_children():
         widget.destroy()
-    show_bar_chart_by_country()
-    global uname,pswd
     tk.Label(content_frame, text="DASHBOARD", font=("Arial", 18)).pack(pady=10)
     database=db()
     connection=database[0]
     cursor=database[1]
-    # Checking if any admin exists
     cursor.execute("SELECT admin_name FROM settings")
     results = cursor.fetchall()
-
+    show_bar_chart_by_country()
     thread = threading.Thread(target=update_null_countries, args=(connection, cursor))
     thread.daemon = True # This ensures the thread exits when the main program does
     thread.start()
-
-
-
-# Connect to my MySQL database
+    global refresh_jobs
+    job_id = root.after(5000, lambda: data_to_show("Dashboard"))
+    refresh_jobs.append(job_id)
 def connect_db():
     return mysql.connector.connect(
         host="localhost",
         user="root",
         password="",
         database="securegate"
-         ,autocommit=True   # ✅ no transaction stays open
+         ,autocommit=True  
     )
 
 def datamanage(page):
@@ -613,7 +688,6 @@ def fetch_data_in_thread(page_name):
                 cursor.execute(f"SELECT * FROM {table_name}")
                 fetched_rows = cursor.fetchall()
         
-        # Use root.after to safely update the GUI from the thread
         root.after(0, lambda: update_gui_with_data(fetched_rows,table_info[1:], page_name))
         
         if conn and conn.is_connected():
@@ -690,16 +764,50 @@ def show_page(page_name):
         label.pack(pady=20)
         
 
-root = tk.Tk()
-root.title("SecureGate")
-root.geometry("1200x500")
+try:
+    from ttkthemes import ThemedTk
+    root = ThemedTk(theme="arc")
+except ImportError:
+    print("ttkthemes not found. Using the 'clam' theme as a fallback.")
+    root = tk.Tk()
+    style = ttk.Style(root)
+    style.theme_use('clam')
+
+root.title("SecureGate Network Monitor")
+try:
+    root.iconbitmap("securegate_image.ico")
+except tk.TclError:
+    print("Icon not found. Skipping.")
+
+INITIAL_WIDTH = 1100
+INITIAL_HEIGHT = 700
+root.geometry(f"{INITIAL_WIDTH}x{INITIAL_HEIGHT}")
+root.minsize(800, 600)
+
+screen_width = root.winfo_screenwidth()
+screen_height = root.winfo_screenheight()
+x_coordinate = int((screen_width / 2) - (INITIAL_WIDTH / 2))
+y_coordinate = int((screen_height / 2) - (INITIAL_HEIGHT / 2))
+root.geometry(f"+{x_coordinate}+{y_coordinate}")
+root.columnconfigure(1, weight=1)
+root.rowconfigure(0, weight=1)
+
+
+
+
+
+
+
+
+
+
+
 
 sidebar = tk.Frame(root, width=150, bg="#2c3e50")
 sidebar.pack(side="left", fill="y")
 
-# Content area (Right panel)
-content_frame = tk.Frame(root, bg="white")
-content_frame.pack(side="right", expand=True, fill="both")
+content_frame = tk.Frame(root,bg="white")
+content_frame.pack(side="right",expand=True,fill="both")
 
 pages = ["Dashboard", "IP Monitor", "Port Monitor","Protocol Monitor","blocked IP", "Logs","Setting", "Exit"]
 
@@ -731,17 +839,18 @@ def handle_button_click(n):
 
             data_to_show(n) 
 
-# Create buttons in sidebar
 for name in pages:
     btn = tk.Button(
-        sidebar,
-        text=name,
-        fg="white",
-        bg="#34495e",
-        font=("Arial", 12),
-        relief="flat",
-        command=partial(handle_button_click, name)      #imp
-    )
+    sidebar,
+    text=name,
+    fg="white",
+    bg="#34495e", # Original color
+    font=("Arial", 12),
+    relief="flat",
+    activebackground="#4a6572", # Color when button is clicked
+    activeforeground="white",
+    command=partial(handle_button_click, name)
+)
     btn.pack(fill="x", pady=2)
 
 
@@ -756,36 +865,61 @@ def show_page_data():
 
     for widget in content_frame.winfo_children():
         widget.destroy()
+    style = ttk.Style()
+    style.configure("Treeview.Heading", font=("Arial", 11, "bold"))
+    style.configure("Treeview", rowheight=28, font=("Arial", 10))
 
-    # Headers
-    for i, col in enumerate(columns):
-        print(columns)
-        tk.Label(content_frame, text=col, font=("Arial", 10, "bold"), 
-                 relief="solid", borderwidth=1, width=20).grid(row=0, column=i, sticky="nsew", padx=0, pady=0)
+    # Create the Treeview widget (the table)
+    tree = ttk.Treeview(content_frame, columns=columns, show='headings')
 
-    # Rows
-    for row_index, row in enumerate(rows):
-        for col_index, cell in enumerate(row):
-            tk.Label(content_frame, text=str(cell), 
-                     relief="solid", borderwidth=1, width=20).grid(row=row_index + 1, column=col_index, sticky="nsew", padx=0, pady=0)
 
-    # Determine the correct columnspan value
-    # If columns is empty, set columnspan to 1 to avoid the error.
-    if len(columns) == 0:
-        span = 1
+    if not rows:
+        no_data_label = ttk.Label(
+        content_frame, 
+        text="No Data Found Here",
+        font=("Arial", 18),
+        foreground="gray" # Use a muted color for the text
+    )
+        no_data_label.pack(expand=True)
     else:
-        span = len(columns)
-        
-    nav = tk.Frame(content_frame)
-    nav.grid(row=len(rows) + 1, columnspan=span, pady=10)
+        for col in columns:
+            tree.heading(col, text=col)
+            tree.column(col, anchor="center", width=120)
 
-    if current_page > 0:
-        tk.Button(nav, text="Previous", command=prev_page).pack(side="left", padx=1)
-    if end < len(all_rows):
-        tk.Button(nav, text="Next", command=next_page).pack(side="left", padx=1)
-#  application run krayla
+        tree.tag_configure('oddrow', background='#f0f0f0') # Light gray for odd rows
+        tree.tag_configure('evenrow', background='white')   # White for even rows
+
+        for row_index, row in enumerate(rows):
+            processed_row = [cell if cell not in [None, 0, "None"] else '-' for cell in row]
+            if row_index % 2 == 0:
+                tree.insert('', 'end', values=processed_row, tags=('evenrow',))
+            else:
+                tree.insert('', 'end', values=processed_row, tags=('oddrow',))
+
+        # Place the Treeview in the grid and make it expandable
+        tree.grid(row=0, column=0, sticky="nsew")
+        content_frame.grid_rowconfigure(0, weight=1)
+        content_frame.grid_columnconfigure(0, weight=1)
+
+        scrollbar = ttk.Scrollbar(content_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        if len(columns) == 0:
+            span = 1
+        else:
+            span = len(columns)
+            
+        nav = tk.Frame(content_frame)
+        nav.grid(row=len(rows) + 1, columnspan=span, pady=10)
+
+        if current_page>0:
+            tk.Button(nav, text="Previous", command=prev_page).pack(side="left", padx=1)
+        if end<len(all_rows):
+            tk.Button(nav,text="Next", command=next_page).pack(side="left", padx=1)
+
+
+
 root.mainloop()
-
 
 
 

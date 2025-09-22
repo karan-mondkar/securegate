@@ -776,16 +776,6 @@ sys_info=SYS_INFO(ips,request,iprequest,network_protocol,connection,cursor)
 import threading
 
 
-'''
-try:
-    geo_thread = threading.Thread(target=sys_info.assign_country, args=(connection,cursor), daemon=True)
-    #geo_thread.start()
-except Exception:
-    print(Exception)
-'''
-
-
-
 while True:
     print("monitor request")
     sys_info.monitor_requests()
