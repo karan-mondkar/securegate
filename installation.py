@@ -4,9 +4,6 @@ import shutil
 import requests
 import importlib.util
 
-# -----------------------------
-# Step 1: Install required pip libraries if missing
-# -----------------------------
 libraries = {
     "os": "os",
     "json": "json",
@@ -108,9 +105,5 @@ for script in project_files:
         processes.append(p)
     else:
         print(f"❌ File not found: {script}")
-
-# Optional: wait for all to finish
-for p in processes:
-    p.wait()
 
 print("\n✅ All SecureGate scripts have finished (or are running if non-blocking).")
