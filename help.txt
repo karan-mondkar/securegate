@@ -1,0 +1,17 @@
+Commands to Identify Active Interfaces for Scapy
+Windows
+netsh interface show interface
+
+
+Displays all network interfaces with their status.
+
+Look for interfaces that are Enabled and Connected.
+
+Linux
+ip addr show
+
+
+Lists all interfaces with their IP addresses.
+
+Look for interfaces with state UP and an assigned IP.
+
