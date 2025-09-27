@@ -640,7 +640,7 @@ def datamanage(page):
     elif page=="Logs":
        return ["iprequest_junction","id","ip address","port number","protocol"," request time"] 
     elif page=="Port Monitor":
-        return ["request_type","port","service","request_count"," request time","is suspicious"]
+        return ["request_type","port","service","request_count"," request time","last seen"]
     elif page=="Protocol Monitor":
         return ["Network_protocol","protocol","request_count"," first seen","last seen"]
     elif page=="blocked IP":

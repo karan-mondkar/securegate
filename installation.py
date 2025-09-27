@@ -18,7 +18,8 @@ libraries = {
     "portalocker": "portalocker",
     "matplotlib": "matplotlib",
     "bcrypt": "bcrypt",
-    "scipy": "scipy"
+    "scipy": "scipy",
+    "psutil":"psutil"
 }
 
 def is_module_installed(module_name):
@@ -43,9 +44,6 @@ for module, pip_name in libraries.items():
 
 print("\n✅ Library check complete.\n")
 
-# -----------------------------
-# Step 2: Download project files (skip if already downloaded)
-# -----------------------------
 def download_file(url, save_dir="securegate", filename=None):
     os.makedirs(save_dir, exist_ok=True)
 
@@ -54,12 +52,10 @@ def download_file(url, save_dir="securegate", filename=None):
 
     filepath = os.path.join(save_dir, filename)
 
-    # Skip download if file already exists
     if os.path.exists(filepath):
         print(f"✔️ Already exists: {filepath} — skipping download")
         return
 
-    # Fix GitHub "blob" links -> raw
     if "github.com" in url and "blob" in url:
         url = url.replace("github.com", "raw.githubusercontent.com").replace("/blob", "")
 
@@ -82,9 +78,6 @@ urls = [
 for url in urls:
     download_file(url)
 
-# -----------------------------
-# Step 3: Run scripts in parallel
-# -----------------------------
 python_cmd = shutil.which("python3") or shutil.which("python")
 if not python_cmd:
     raise RuntimeError("❌ No Python interpreter found!")
@@ -106,4 +99,4 @@ for script in project_files:
     else:
         print(f"❌ File not found: {script}")
 
-print("\n✅ All SecureGate scripts have finished (or are running if non-blocking).")
+print("\n✅ All SecureGate scripts have finished .")
