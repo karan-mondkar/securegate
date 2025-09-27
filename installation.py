@@ -19,7 +19,8 @@ libraries = {
     "matplotlib": "matplotlib",
     "bcrypt": "bcrypt",
     "scipy": "scipy",
-    "psutil":"psutil"
+    "psutil":"psutil",
+    "PIL":"PIL"
 }
 
 def is_module_installed(module_name):

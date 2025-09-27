@@ -8,7 +8,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
 import json
 from tkinter import ttk
-
+from PIL import Image, ImageTk
 
 validate_user=False
 current_page = 0
@@ -304,7 +304,7 @@ def show_bar_chart_by_country():
 
 
 
-global admin_user, email, admin_pass,phone, time_limit, honeypot_ips,max_requests_per_ip, folder_path, allowed_ports, port_services,form_container
+global admin_user, email, admin_pass,phone, time_limit, honeypot_ips,max_requests_per_ip, folder_path, allowed_ports, port_services,form_container,image_container
 global interval_var, request_limit_var
 
 
@@ -419,7 +419,7 @@ def ins_honey(IP):
 
 
 def settingshow(setnum):
-    global admin_user, email, admin_pass,phone,max_requests_per_ip, time_limit, honeypot_ips, folder_path, allowed_ports, port_services,form_container
+    global admin_user, email, admin_pass,phone,max_requests_per_ip, time_limit, honeypot_ips, folder_path, allowed_ports, port_services,form_container,image_container
     global interval_var, request_limit_var ,port,service
 
 
@@ -432,9 +432,13 @@ def settingshow(setnum):
     for widget in content_frame.winfo_children():
         widget.destroy()
     if setnum == 1:
-        sidebar.pack_forget()
-        form_container = ttk.Frame(root, padding="10")
-        form_container.pack(expand=True)
+        style = ttk.Style(root)
+        style.configure("Image.TFrame", background="#F2F4F7")
+        form_container = ttk.Frame(root, padding="20")
+        image_container = ttk.Frame(root, style="Image.TFrame")
+        form_container.pack(side="left", fill="y", padx=20, pady=20)
+        image_container.pack(side="right", expand=True, fill="both", padx=20, pady=20)
+        
         settings_group = ttk.LabelFrame(form_container, text="Admin Account Setup", padding="15 10")
         settings_group.grid(row=0, column=0, sticky="ew")
         settings_group.columnconfigure(1, weight=1)
@@ -457,6 +461,38 @@ def settingshow(setnum):
 
         confirm_button = ttk.Button(form_container, text="Confirm Settings", command=lambda: update_setting("sign in"))
         confirm_button.grid(row=1, column=0, pady=20)
+        try:
+            original_image = Image.open("securegate_.png")
+            
+            def resize_image(event):
+                new_width, new_height = event.width, event.height
+                original_aspect = original_image.width / original_image.height
+                container_aspect = new_width / new_height
+
+                if container_aspect > original_aspect:
+                    height = new_height
+                    width = int(height * original_aspect)
+                else:
+                    width = new_width
+                    height = int(width / original_aspect)
+
+                if width > 0 and height > 0:
+                    resized_image = original_image.resize((width, height), Image.Resampling.LANCZOS)
+                    photo = ImageTk.PhotoImage(resized_image)
+                    image_label.config(image=photo)
+                    image_label.image = photo
+
+            image_label = ttk.Label(image_container, anchor="center")
+            image_label.pack(expand=True, fill="both")
+            image_container.bind("<Configure>", resize_image)
+
+        except FileNotFoundError:
+            error_label = ttk.Label(image_container, text="securegate image not found.", justify="center")
+            error_label.pack(expand=True)
+
+
+
+
     if setnum==2:
         sidebar.pack_forget()
         database=db()
@@ -568,10 +604,14 @@ def update_setting(val):
                 query = """ INSERT INTO Settings (admin_name,email,password_hash) VALUES (%s,%s,%s)"""
                 cursor.execute(query, (admin,em,pass_hs))
                 connection.commit()
-
+                
                 dashboardshow()
                 if form_container:
                     form_container.destroy()
+                if image_container:
+                    image_container.destroy()
+
+
                 validate_user=True    
     if val=="phone":
             print("yess")
