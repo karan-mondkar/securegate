@@ -79,7 +79,7 @@ class SYS_INFO:
         #request_type table
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS request_type (
-            port_number SMALLINT UNSIGNED PRIMARY KEY,
+            port_number VARCHAR(50) PRIMARY KEY,
             port_name VARCHAR(50),
             request_count INT DEFAULT 1,               
             request_time DATETIME               
@@ -92,7 +92,7 @@ class SYS_INFO:
             CREATE TABLE IF NOT EXISTS iprequest_junction (
             id INT AUTO_INCREMENT PRIMARY KEY,
             ip_address VARCHAR(45),
-            port_number SMALLINT UNSIGNED,
+            port_number VARCHAR(50),
             protocol VARCHAR(10) ,
             request_time DATETIME)
             """)
@@ -101,10 +101,10 @@ class SYS_INFO:
             cursor.execute("""
             
 CREATE TABLE IF NOT EXISTS settings (
-    admin_name VARCHAR(50) ,
+    admin_name VARCHAR(100) ,
     password_hash VARCHAR(255) ,
-    email VARCHAR(50),
-    phone VARCHAR(13),
+    email VARCHAR(150),
+    phone VARCHAR(20),
 
     request_time_limit INT,           -- in minutes
     max_requests_per_ip JSON,
@@ -364,14 +364,10 @@ CREATE TABLE IF NOT EXISTS settings (
         
         if option=="ip":
             ip=ipdata[0]
-            req_count=ipdata[1]
-            print(req_count)
-            print("/n")
-            if  ips.is_ip_suspicious(req_count,limit):         #req>limit:
-                reqps=int(((req_count-limit)/limit)*100)
+            req=ipdata[1]
+            if  ips.is_ip_suspicious(req,limit):         #req>limit:
+                reqps=int(((req-limit)/limit)*100)
                 ips.block_ip(ip,reqps)
-                print("IP BLOCK:-",ip)
-            print("debug")
         '''if option=="port":
             port,port_request=req
             if request.is_port_suspicious(port_request,limit):
@@ -490,18 +486,19 @@ class IPS:
         self.cursor.execute(query,)
         blk_list=self.cursor.fetchall()
         return blk_list         
-    def is_ip_suspicious(self,request_counter, expected_requests, confidence_level=0.99):
-
-        print(f"request counter {request_counter} expected_request {expected_requests}  confidence_level: {confidence_level} ")
-        std_dev = 0.1 * expected_requests  # 10% of expected as proxy Standardd deviation
-
+    
+      
+    def is_ip_suspicious(ip_request_count, mean, confidence_level=0.99):
+        #Returns True if the IP is suspicious 
+        #for me mean means expected request
+        std_dev = 0.1 * mean                                                                        #10% of mean as chosen SD
         if std_dev == 0:
             return False
-
-        z_score = (request_counter - expected_requests) / std_dev
+        z_score = (ip_request_count - mean) / std_dev
         z_threshold = norm.ppf(confidence_level)
 
-        return z_score > z_threshold
+        return z_score > z_threshold  # directly returns True/False
+
 
 
 class REQUEST:

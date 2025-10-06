@@ -45,7 +45,7 @@ for module, pip_name in libraries.items():
 
 print("\n✅ Library check complete.\n")
 
-def download_file(url, save_dir="securegate", filename=None):
+def download_file(url, save_dir="securegate_files", filename=None):
     os.makedirs(save_dir, exist_ok=True)
 
     if not filename:
@@ -84,9 +84,10 @@ if not python_cmd:
     raise RuntimeError("❌ No Python interpreter found!")
 
 project_files = [
-    "securegate/securegate_new.py",
-    "securegate/network_monitor.py",
-    "securegate/gui.py"
+    
+    "securegate_files/network_monitor.py",
+    "securegate_files/securegate_new.py",
+    "securegate_files/gui.py"
 ]
 
 processes = []
