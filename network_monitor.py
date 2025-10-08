@@ -1,4 +1,4 @@
-
+iface_name="Wi-Fi"
 from scapy.all import sniff, Ether, IP, IPv6, TCP, UDP, ICMP, Raw
 from datetime import datetime
 import os
@@ -6,6 +6,17 @@ import time
 import portalocker
 import json
 import queue
+import psutil
+def choose_interface():
+    """
+    Lists all network interfaces and prompts the user to choose one.
+    """
+    interfaces = list(psutil.net_if_addrs().keys())
+    print("Available Network Interfaces:")
+    for i, iface_name in enumerate(interfaces):
+        print(f"  {i}: {iface_name}")
+
+choose_interface()
 
 last_run = 0
 
@@ -160,4 +171,4 @@ def log_packet(packet):
 
 
 while True:
-    sniff(iface="Wi-Fi", prn=log_packet, store=False, count=0)
+    sniff(iface=iface_name, prn=log_packet, store=False, count=0)
