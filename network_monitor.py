@@ -1,89 +1,163 @@
-import matplotlib.pyplot as plt
-from matplotlib.patches import Patch
-import numpy as np
 
-# Stages of the Evolutionary Prototype Model
-stages = [
-    "Requirement Gathering",
-    "Requirement Analysis",
-    "Prototype Development",
-    "User Evaluation",
-    "Prototype Refinement",
-    "Testing & Validation",
-    "Final Delivery"
-]
+from scapy.all import sniff, Ether, IP, IPv6, TCP, UDP, ICMP, Raw
+from datetime import datetime
+import os
+import time
+import portalocker
+import json
+import queue
 
-# Timeline data in months (0 = June)
-# Each tuple is (start_month, duration_in_months)
-planned_data = [
-    (0, 1),  # Requirement Gathering (June)
-    (1, 1),  # Requirement Analysis (July)
-    (2, 2),  # Prototype Development (Aug-Sep)
-    (4, 1),  # User Evaluation (Oct)
-    (5, 2),  # Prototype Refinement (Nov-Dec)
-    (7, 1),  # Testing & Validation (Jan)
-    (8, 1)   # Final Delivery (Feb)
-]
+last_run = 0
 
-actual_data = [
-    (0, 0.75),  # Requirement Gathering (June 1st to 3rd week)
-    (0.75, 0.5), # Requirement Analysis (June 4th week to July 2nd week)
-    (1.25, 2.75), # Prototype Development (July 2nd week to end of October)
-    (4, 1),      # User Evaluation (completed in October)
-    (5, 2.25),   # Prototype Refinement (Nov, Dec, first week of Jan)
-    (7.25, 1),   # Testing & Validation (2nd week of Jan to 1st week of Feb)
-    (8.25, 0.75) # Final Delivery (remaining 3 weeks of Feb)
-]
+# Ensure files exist
+open("securegate_detailed_log1.json", "a").close()
+open("securegate_detailed_log2.json", "a").close()
+open("imp_detailed_log.json", "a").close()
 
-# Month labels for the x-axis, now including March
-months = ["June", "July", "August", "September", "October", "November", "December", "January", "February", "March"]
+def safe(data, key, default="N/A"):
+    return str(data.get(key, default)).strip()
 
-# Reverse lists for plotting from top to bottom
-stages = stages[::-1]
-planned_data = planned_data[::-1]
-actual_data = actual_data[::-1]
+request_queue = queue.Queue(maxsize=50000)
 
-# Create the plot
-fig, ax = plt.subplots(figsize=(12, 7))
+def logfile(data):
+    global last_run
+    current_time = time.time()
+    source_file = "securegate_detailed_log1.json"
+    destination_file = "securegate_detailed_log2.json"
 
-# Define y-positions for the bars
-y_positions = np.arange(len(stages))
+    request = {
+        "Time": safe(data, "Time"),
+        "Src_IP": safe(data, "Src_IP"),
+        "Dst_IP": safe(data, "Dst_IP"),
+        "Protocol": safe(data, "Protocol", "Unknown"),
+        "Dst_Port": safe(data, "Dst_Port")
+    }
+    request_queue.put(request)
 
-# Plot bars
-for i, stage in enumerate(stages):
-    # Plot planned bar
-    planned_start, planned_duration = planned_data[i]
-    ax.barh(y_positions[i] + 0.2, planned_duration, left=planned_start,
-            height=0.4, edgecolor="black", facecolor="white")
+    # Process queue → write logs
+    while not request_queue.empty():
+        a = request_queue.get()
+        try:
+            with open(source_file, "a") as f1:
+                portalocker.lock(f1, portalocker.LOCK_EX)
+                f1.write(json.dumps(a) + "\n")
+                portalocker.unlock(f1)
 
-    # Plot actual bar
-    actual_start, actual_duration = actual_data[i]
-    ax.barh(y_positions[i] - 0.2, actual_duration, left=actual_start,
-            height=0.4, color="black", alpha=0.8)
+            with open("imp_detailed_log.json", "a") as f2:
+                f2.write(json.dumps(a) + "\n")
 
-# Set labels and title
-ax.set_xlabel("Timeline (Months)")
-ax.set_title("Evolutionary Prototype Model: Planned vs. Actual Timeline")
-ax.set_yticks(y_positions)
-ax.set_yticklabels(stages)
+        except portalocker.exceptions.LockException:
+            print("File is locked, re-adding to queue")
+            request_queue.put(a)
 
-# Configure x-axis with month labels
-ax.set_xticks(np.arange(len(months)))
-ax.set_xticklabels(months)
+    # Copy every 3 seconds
+    if current_time - last_run >= 3:
+        last_run = current_time
+        try:
+            if os.path.exists(source_file):
+                with open(source_file, "r") as src:
+                    try:
+                        portalocker.lock(src, portalocker.LOCK_EX | portalocker.LOCK_NB)
+                        content = src.read()
 
-# Adjust the x-axis limit to show March
-ax.set_xlim(-0.5, len(months) - 0.5)
+                        with open(destination_file, "a") as dest:
+                            dest.write(content)
 
-# Create legend
-legend_elements = [
-    Patch(facecolor='white', edgecolor='black', label='Planned'),
-    Patch(facecolor='black', label='Actual')
-]
-ax.legend(handles=legend_elements, loc='upper right')
+                        portalocker.unlock(src)
+                    except portalocker.exceptions.LockException:
+                        print("Source file is locked. Try again next time.")
+                os.remove(source_file)
+        except Exception as e:
+            print(f"Error during file copy or delete: {e}")
 
-# Add grid lines
-ax.grid(axis="x", linestyle="--", alpha=0.5)
 
-plt.tight_layout()
-plt.show()
- just till the september end should be there actual working is done so just modified it
+PROTO_MAP = {
+    1: "ICMP",
+    2: "IGMP",
+    6: "TCP",
+    17: "UDP",
+    41: "IPv6",
+    47: "GRE",
+    50: "ESP",
+    51: "AH",
+    58: "ICMPv6",
+    89: "OSPF",
+    132: "SCTP",
+}
+
+def log_packet(packet):
+    global request_queue, data
+    try:
+        timestamp = datetime.fromtimestamp(packet.time).strftime("%Y-%m-%d %H:%M:%S.%f")
+        data = {
+            "Time": timestamp,
+            "Protocol": "Unknown",
+            "Src_IP": "N/A",
+            "Src_Port": "N/A",
+            "Dst_IP": "N/A",
+            "Dst_Port": "N/A",
+            "Flags": "N/A",
+            "TTL": "N/A",
+            "Window": "N/A",
+            "Payload_Size": 0,
+            "MAC_Src": "N/A",
+            "MAC_Dst": "N/A"
+        }
+
+        # MAC
+        if Ether in packet:
+            data["MAC_Src"] = packet[Ether].src
+            data["MAC_Dst"] = packet[Ether].dst
+
+        # IPv4
+        if IP in packet:
+            proto_num = packet[IP].proto
+            data["Protocol"] = PROTO_MAP.get(proto_num, f"Unknown({proto_num})")
+            data["Src_IP"] = packet[IP].src
+            data["Dst_IP"] = packet[IP].dst
+            data["TTL"] = packet[IP].ttl
+
+        # IPv6
+        elif IPv6 in packet:
+            proto_num = packet[IPv6].nh
+            data["Protocol"] = PROTO_MAP.get(proto_num, f"Unknown({proto_num})")
+            data["Src_IP"] = packet[IPv6].src
+            data["Dst_IP"] = packet[IPv6].dst
+            data["TTL"] = packet[IPv6].hlim
+
+        # TCP
+        if TCP in packet:
+            data["Protocol"] = "TCP"
+            data["Src_Port"] = packet[TCP].sport
+            data["Dst_Port"] = packet[TCP].dport
+            data["Flags"] = str(packet[TCP].flags)
+            data["Window"] = packet[TCP].window
+            if Raw in packet:
+                data["Payload_Size"] = len(packet[Raw].load)
+
+        # UDP
+        elif UDP in packet:
+            data["Protocol"] = "UDP"
+            data["Src_Port"] = packet[UDP].sport
+            data["Dst_Port"] = packet[UDP].dport
+            if Raw in packet:
+                data["Payload_Size"] = len(packet[Raw].load)
+
+        # ICMP
+        elif ICMP in packet:
+            data["Protocol"] = "ICMP"
+            if Raw in packet:
+                data["Payload_Size"] = len(packet[Raw].load)
+
+        # Push
+        request_queue.put(data)
+
+    except Exception as e:
+        print(f"Error parsing packet: {e}")
+
+    print(data)
+    logfile(data)
+
+
+while True:
+    sniff(iface="Wi-Fi", prn=log_packet, store=False, count=0)
