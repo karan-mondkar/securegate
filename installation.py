@@ -29,21 +29,21 @@ def is_module_installed(module_name):
     except Exception:
         return False
 
-print("📦 Checking/installing required libraries...\n")
+print(" Checking/installing required libraries...\n")
 for module, pip_name in libraries.items():
     if is_module_installed(module):
-        print(f"✅ {pip_name} already installed.")
+        print(f" {pip_name} already installed.")
     else:
-        print(f"⬇️ Installing {pip_name}...")
+        print(f"️ Installing {pip_name}...")
         try:
             subprocess.check_call(["python3", "-m", "pip", "install", pip_name])
         except Exception:
             try:
                 subprocess.check_call(["python", "-m", "pip", "install", pip_name])
             except Exception as e:
-                print(f"⚠️ Could not install {pip_name}: {e}")
+                print(f"️ Could not install {pip_name}: {e}")
 
-print("\n✅ Library check complete.\n")
+print("\n Library check complete.\n")
 
 def download_file(url, save_dir="securegate_files", filename=None):
     os.makedirs(save_dir, exist_ok=True)
@@ -65,9 +65,9 @@ def download_file(url, save_dir="securegate_files", filename=None):
         with open(filepath, "wb") as f:
             for chunk in response.iter_content(1024):
                 f.write(chunk)
-        print(f"📥 Downloaded: {filepath}")
+        print(f"Downloaded: {filepath}")
     else:
-        print(f"❌ Failed to download {url}. Status code: {response.status_code}")
+        print(f"Failed to download {url}. Status code: {response.status_code}")
 
 urls = [
     "https://raw.githubusercontent.com/karan-mondkar/securegate/main/gui.py",
@@ -81,7 +81,7 @@ for url in urls:
 
 python_cmd = shutil.which("python3") or shutil.which("python")
 if not python_cmd:
-    raise RuntimeError("❌ No Python interpreter found!")
+    raise RuntimeError(" No Python interpreter found!")
 
 project_files = [
     
@@ -92,13 +92,13 @@ project_files = [
 
 processes = []
 
-print("\n🚀 Starting SecureGate scripts in parallel...\n")
+print("\n Starting SecureGate scripts in parallel...\n")
 for script in project_files:
     if os.path.exists(script):
-        print(f"▶️ Launching: {script}")
+        print(f" Launching: {script}")
         p = subprocess.Popen([python_cmd, script])
         processes.append(p)
     else:
-        print(f"❌ File not found: {script}")
+        print(f" File not found: {script}")
 
 print("\n✅ All SecureGate scripts have finished .")
