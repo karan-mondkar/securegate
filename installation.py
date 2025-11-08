@@ -54,7 +54,7 @@ def download_file(url, save_dir="securegate_files", filename=None):
     filepath = os.path.join(save_dir, filename)
 
     if os.path.exists(filepath):
-        print(f"✔️ Already exists: {filepath} — skipping download")
+        print(f"️ Already exists: {filepath} — skipping download")
         return
 
     if "github.com" in url and "blob" in url:
