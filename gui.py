@@ -10,13 +10,15 @@ import json
 from tkinter import ttk
 from PIL import Image, ImageTk
 
+from securegate_new import *
+RUN_ENGINE=False
 validate_user=False
 current_page = 0
 rows_per_page = 15
 all_rows = []
 columns = []
 
-global connection,cursor
+#global connection,cursor
 
 refresh_jobs = []  # List to store job IDs
 
@@ -716,51 +718,42 @@ def update_setting(val):
         query = """ UPDATE Settings SET request_time_limit = %s """
         cursor.execute(query, (max_requests_per_ip.get(),))
         connection.commit()
-
-    
     if val in ["whitelist", "blacklist"]:
-        
+        IPS_ob = IPS
 
-        # Determine column and input widget
-        column_name = "whitelisted_ips" if val == "whitelist" else "blacklisted_ips"
-        entry_widget = whitelist if val == "whitelist" else blacklist
+        # Get user-entered IP (from correct widget)
+        ip_value = (whitelist.get() if val == "whitelist" else blacklist.get()).strip()
 
-        # Get user-entered IPs
-        new_ips_raw = entry_widget.get().strip()
-        if not new_ips_raw:
-            messagebox.showwarning("Input Error", "Please enter at least one IP address.")
+        if not ip_value:
+            messagebox.showwarning("Input Error", "Please enter an IP address.")
             return
 
-        # Split comma-separated IPs
-        new_ips = [ip.strip() for ip in new_ips_raw.split(",") if ip.strip()]
+      
+        all_whitelist = IPS_ob.whitelist_ip("all")
+        all_blacklist = IPS_ob.blacklist_ip("all")
 
-        # Fetch existing JSON list
-        query_select = f"SELECT {column_name} FROM settings LIMIT 1"
-        cursor.execute(query_select)
-        result = cursor.fetchone()
+     
 
-        if result and result[0]:
-            try:
-                existing_ips = json.loads(result[0])  # parse existing JSON array
-            except json.JSONDecodeError:
-                existing_ips = []
-        else:
-            existing_ips = []
+        if ip_value in all_whitelist:
+            messagebox.showerror("Not Allowed", f"{ip_value} already exists in Whitelist.")
+            return
 
-        # Merge and deduplicate
-        for ip in new_ips:
-            if ip not in existing_ips:
-                existing_ips.append(ip)
+        if ip_value in all_blacklist:
+            messagebox.showerror("Not Allowed", f"{ip_value} already exists in Blacklist.")
+            return
 
-        # Convert back to JSON
-        formatted_ips = json.dumps(existing_ips)
 
-        # Update DB safely
-        query_update = f"UPDATE settings SET {column_name} = %s"
-        cursor.execute(query_update, (formatted_ips,))
-        connection.commit()
+        if val == "whitelist":
+            IPS_ob.whitelist_ip("add", ip_value)
+            messagebox.showinfo("Success", f"{ip_value} added to Whitelist.")
+            return
 
-        messagebox.showinfo("Success", f"{val.title()} IPs updated successfully!")
+        if val == "blacklist":
+            IPS_ob.blacklist_ip("add", ip_value)
+            messagebox.showinfo("Success", f"{ip_value} added to Blacklist.")
+            return
+        
+    
 def dashboardshow():
     sidebar.pack()
     global connection,cursor
@@ -792,7 +785,7 @@ def datamanage(page):
     if page=="Dashboard":
         return ["Dashboard"]
     if page =="IP Monitor":
-       return ["IP","ip address"," request time","count of occur","blocked","block time","local ip","country","recent request"] 
+       return ["IP","ip address"," request time","count of occur","blocked","local ip","block time","country","recent request"] 
     elif page=="Logs":
        return ["iprequest_junction","id","ip address","port number","protocol"," request time"] 
     elif page=="Port Monitor":

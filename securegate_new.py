@@ -113,11 +113,11 @@ CREATE TABLE IF NOT EXISTS settings (
     max_requests_per_ip JSON,
 
     honeypot_ips VARCHAR(255),
-    allowed_ports JSON,
+    allowed_ports LONGTEXT,
     sensitive_folders VARCHAR(255),
 
-    whitelisted_ips JSON,
-    blacklisted_ips JSON,
+    whitelisted_ips LONGTEXT NULL,
+    blacklisted_ips LONGTEXT NULL,
 
     upload_folder VARCHAR(255),
     email_alerts_enabled BOOLEAN,
@@ -283,6 +283,8 @@ CREATE TABLE IF NOT EXISTS settings (
     def check_suspiciousness(self):
         global insertion_time,timer,ipreqlimit
         try:
+            request.is_request_suspicious()
+
             cursor.execute("SELECT max_requests_per_ip from settings")
             result = cursor.fetchone()
 
@@ -433,6 +435,23 @@ class IPS:
             print("error insertion :-",e)
      
     def block_ip(self,ip_address,blkps):
+
+        cursor.execute("SELECT whitelisted_ips FROM settings LIMIT 1")
+        result = cursor.fetchone()
+
+        if not result or not result[0]:
+            return 
+
+        whitelist = result[0].split(",")  # CSV → list
+
+    
+        whitelist = [x.strip() for x in whitelist if x.strip()]
+
+       
+        if ip_address in whitelist:
+            print(f"[BLOCKED SECTION:] {ip_address} is whitelisted, unblocked.")
+            return
+
         block_list=self.block_list()
         if ip_address not in block_list:
             try:
@@ -509,100 +528,101 @@ class IPS:
         return z_score > z_threshold
     
     def whitelist_ip(action, ip=None):
-       
-        # Fetch current whitelist
-        cursor.execute("SELECT whitelisted_ips FROM settings LIMIT 1")
-        result = cursor.fetchone()
-        current_ips = result[0] if result and result[0] else ""
+        try:
+            cursor.execute("SELECT whitelisted_ips FROM settings LIMIT 1")
+            result = cursor.fetchone()
 
-        # Convert to list
-        ip_list = [x.strip() for x in current_ips.split(",") if x.strip()]
+            # Handle NULL or empty
+            current_ips = result[0] if result else None
 
-        # ADD IP
-        if action == "add" and ip:
-            if ip not in ip_list:
-                ip_list.append(ip)
-                print(f"[WHITELIST] Added: {ip}")
+            # Convert bytes → str
+            if isinstance(current_ips, bytes):
+                current_ips = current_ips.decode()
+
+            # Convert string → list
+            if current_ips:
+                ip_list = [x.strip() for x in current_ips.split(",") if x.strip()]
             else:
-                print(f"[WHITELIST] Already exists: {ip}")
+                ip_list = []
 
-        # REMOVE IP
-        elif action == "remove" and ip:
-            if ip in ip_list:
-                ip_list.remove(ip)
-                print(f"[WHITELIST] Removed: {ip}")
-            else:
-                print(f"[WHITELIST] IP not found: {ip}")
+            # --------------------
+            # ADD
+            # --------------------
+            if action == "add" and ip:
+                if ip not in ip_list:
+                    ip_list.append(ip)
+                    print(f"[WHITELIST] Added: {ip}")
+                else:
+                    print(f"[WHITELIST] Already exists: {ip}")
 
-        # SHOW ALL
-        elif action == "all":
-            print("[WHITELIST] IPs:", ip_list)
-            cursor.close()
-            connection.close()
-            return ip_list
+            # --------------------
+            # REMOVE
+            # --------------------
+            elif action == "remove" and ip:
+                if ip in ip_list:
+                    ip_list.remove(ip)
+                    print(f"[WHITELIST] Removed: {ip}")
+                else:
+                    print(f"[WHITELIST] IP not found: {ip}")
 
-        else:
-            print("[WHITELIST] Invalid action!")
+            # --------------------
+            # SHOW ALL
+            # --------------------
+            elif action == "all":
+                return ip_list
 
-        # Convert list back to CSV string
-        final_text = ",".join(ip_list)
+            # --------------------
+            # Save back to DB
+            # --------------------
+            final_text = ",".join(ip_list) if ip_list else None  # NULL instead of ''
 
-        # Save to DB
-        cursor.execute("UPDATE settings SET whitelisted_ips=%s", (final_text,))
-        connection.commit()
+            cursor.execute(
+                "UPDATE settings SET whitelisted_ips=%s",
+                (final_text,)
+            )
+            connection.commit()
 
-        cursor.close()
-        connection.close()
+        except Exception as e:
+            print("[WHITELIST ERROR]:", e)
 
-    
     def blacklist_ip(action, ip=None):
+        try:
+            blocked_until = datetime.now() + timedelta(days=365 * 100)
+            ips.block_ip(ip,blocked_until)
+            cursor.execute("SELECT blacklisted_ips FROM settings LIMIT 1")
+            result = cursor.fetchone()
 
-        cursor.execute("SELECT blacklisted_ips FROM settings LIMIT 1")
-        result = cursor.fetchone()
-        current_ips = result[0] if result and result[0] else ""
+            raw = result[0] if result else None
 
-        ip_list = [x.strip() for x in current_ips.split(",") if x.strip()]
-
-        # ADD
-        if action == "add" and ip:
-            if ip not in ip_list:
-                ip_list.append(ip)
-                print(f"[BLACKLIST] Added: {ip}")
+            if raw is None:
+                ip_list = []
             else:
-                print(f"[BLACKLIST] Already exists: {ip}")
+                if isinstance(raw, bytes):
+                    raw = raw.decode()
 
-        # REMOVE
-        elif action == "remove" and ip:
-            if ip in ip_list:
-                ip_list.remove(ip)
-                print(f"[BLACKLIST] Removed: {ip}")
-            else:
-                print(f"[BLACKLIST] IP not found: {ip}")
+                try:
+                    ip_list = json.loads(raw)
+                except:
+                    ip_list = []
 
-        # LIST ALL
-        elif action == "all":
-            print("[BLACKLIST] IPs:", ip_list)
-            cursor.close()
-            connection.close()
-            return ip_list
+            if action == "add" and ip:
+                if ip not in ip_list:
+                    ip_list.append(ip)
 
-        else:
-            print("[BLACKLIST] Invalid action!")
+            elif action == "remove" and ip:
+                if ip in ip_list:
+                    ip_list.remove(ip)
 
-        final_text = ",".join(ip_list)
+            elif action == "all":
+                return ip_list
 
-        cursor.execute("UPDATE settings SET blacklisted_ips=%s", (final_text,))
-        connection.commit()
+            final_json = json.dumps(ip_list)
 
-        cursor.close()
-        connection.close()
+            cursor.execute("UPDATE settings SET blacklisted_ips=%s", (final_json,))
+            connection.commit()
 
-
-
-
-
-
-
+        except Exception as e:
+            print("[BLACKLIST ERROR]:", e)
 class REQUEST:
     
     def __init__(self,connection,cursor):
@@ -625,15 +645,30 @@ class REQUEST:
 
     def is_request_suspicious(self):
         try:
-            suspicious_percent=20
+            suspicious_percent = 20
+            minimum_request = 100
+
+            # -------------------------------------------------------
+            # 1. Fetch allowed ports from settings
+            # -------------------------------------------------------
             self.cursor.execute("SELECT allowed_ports FROM settings LIMIT 1")
             res = self.cursor.fetchone()
 
-            if not res or not res["allowed_ports"]:
+            if not res or not res[0]:
                 print("[ERROR] No allowed ports found in DB.")
                 return False
-            valid_ports = {int(p.strip()) for p in res["allowed_ports"].split(",") if p.strip().isdigit()}
-            print("Valid Ports from DB:", valid_ports)
+
+            # allowed_ports is stored as CSV: "22,80,443"
+            valid_ports = {
+                int(p.strip())
+                for p in res[0].split(",")
+                if p.strip().isdigit()
+            }
+            print("Valid Ports:", valid_ports)
+
+            # -------------------------------------------------------
+            # 2. Get last 1 hour requests
+            # -------------------------------------------------------
             one_hour_ago = datetime.now() - timedelta(hours=1)
 
             self.cursor.execute("""
@@ -651,29 +686,38 @@ class REQUEST:
             total_requests = len(logs)
             print(f"Total Requests (1 hour): {total_requests}")
 
-
-            minimum_request=100
-            if total_requests<=minimum_request:
+            # -------------------------------------------------------
+            # 3. Ignore detection if traffic too low
+            # -------------------------------------------------------
+            if total_requests <= minimum_request:
+                print("[INFO] Not enough traffic (< minimum threshold).")
                 return False
+
+            # -------------------------------------------------------
+            # 4. Count invalid port requests
+            # -------------------------------------------------------
             invalid_count = 0
 
             for row in logs:
-                port = int(row["port"])
+                port = int(row[0])  # row[0] = port (tuple index)
                 if port not in valid_ports:
                     invalid_count += 1
 
             print("Invalid Port Requests:", invalid_count)
 
+            # -------------------------------------------------------
+            # 5. Calculate invalid percentage
+            # -------------------------------------------------------
             percent_invalid = (invalid_count / total_requests) * 100
             print(f"Invalid %: {percent_invalid:.2f}%")
+
+            # -------------------------------------------------------
+            # 6. Compare & return result
+            # -------------------------------------------------------
             if percent_invalid >= suspicious_percent:
                 print("[ALERT] Suspicious traffic detected!")
-                self.cursor.close()
-                self.connection.close()
                 return True
 
-            self.cursor.close()
-            self.conn.close()
             return False
 
         except Exception as e:
@@ -1032,15 +1076,14 @@ iprequest=IPREQUEST(connection,cursor)
 network_protocol=NETWORK_PROTOCOL(connection,cursor)
 sys_info=SYS_INFO(ips,request,iprequest,network_protocol,connection,cursor)
 
-import threading
-
-
-while True:
-    print("monitor request")
-    sys_info.monitor_requests()
-    print("process")
-    sys_info.process()
-    print("check suspiciousness")
-    sys_info.check_suspiciousness()
+RUN_ENGINE=True
+if __name__ == "__main__" and RUN_ENGINE:
+    while True:
+        print("monitor request")
+        sys_info.monitor_requests()
+        print("process")
+        sys_info.process()
+        print("check suspiciousness")
+        sys_info.check_suspiciousness()
 
 
