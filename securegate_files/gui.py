@@ -10,13 +10,15 @@ import json
 from tkinter import ttk
 from PIL import Image, ImageTk
 
+from securegate_new import *
+RUN_ENGINE=False
 validate_user=False
 current_page = 0
 rows_per_page = 15
 all_rows = []
 columns = []
 
-global connection,cursor
+#global connection,cursor
 
 refresh_jobs = []  # List to store job IDs
 
@@ -304,7 +306,7 @@ def show_bar_chart_by_country():
 
 
 
-global admin_user, email, admin_pass,phone, time_limit, honeypot_ips,max_requests_per_ip, folder_path, allowed_ports, port_services,form_container,image_container
+global admin_user, email, admin_pass,phone, time_limit, honeypot_ips,max_requests_per_ip,folder_path, allowed_ports, port_services,form_container,image_container,whitelist,blacklist,email_notify_var
 global interval_var, request_limit_var
 
 
@@ -419,8 +421,8 @@ def ins_honey(IP):
 
 
 def settingshow(setnum):
-    global admin_user, email, admin_pass,phone,max_requests_per_ip, time_limit, honeypot_ips, folder_path, allowed_ports, port_services,form_container,image_container
-    global interval_var, request_limit_var ,port,service
+    global admin_user, email, admin_pass,phone,max_requests_per_ip, time_limit, honeypot_ips,sensative_folder, folder_path, allowed_ports, port_services,form_container,image_container,new_email,whitelist,blacklist,folder_path
+    global interval_var, request_limit_var ,port,service,email_notify_var
 
 
     '''
@@ -524,73 +526,114 @@ def settingshow(setnum):
                                     text="Submit", 
                                     command=lambda: validate(admin_user.get(), admin_pass.get()))
             submit_button.pack(pady=(0, 20), ipady=5)
-            
     if setnum == 3:
-        
         style = ttk.Style()
-        style.configure("TLabelFrame.Label", font=("Helvetica", 12, "bold"))
+        style.configure("TLabelFrame.Label", font=("Helvetica", 11, "bold"))
 
-        settings_container = ttk.Frame(content_frame, padding=10)
+        settings_container = ttk.Frame(content_frame, padding=5)
         settings_container.pack(fill="both", expand=True)
 
-        general_group = ttk.LabelFrame(settings_container, text="General", padding=15)
-        general_group.pack(fill="x", padx=10, pady=5)
+        # ================= GENERAL SECTION =================
+        general_group = ttk.LabelFrame(settings_container, text="General", padding=8)
+        general_group.pack(fill="x", padx=8, pady=4)
         general_group.columnconfigure(1, weight=1)
-        
-        ttk.Label(general_group, text="Admin Mobile Number:").grid(row=0, column=0, padx=5, pady=8, sticky='w')
-        phone = ttk.Entry(general_group)
-        phone.grid(row=0, column=1, padx=5, pady=8, sticky='ew')
-        ttk.Button(general_group, text="Update", command=lambda: update_setting("phone")).grid(row=0, column=2, padx=5, pady=8)
-        limit_group = ttk.LabelFrame(settings_container, text="Rate Limiting", padding=15)
-        limit_group.pack(fill="x", padx=10, pady=5)
+
+        ttk.Label(general_group, text="Mobile Number:").grid(row=0, column=0, padx=3, pady=4, sticky='w')
+        phone = ttk.Entry(general_group, width=25)
+        phone.grid(row=0, column=1, padx=3, pady=4, sticky='ew')
+        ttk.Button(general_group, text="Save", width=10, command=lambda: update_setting("phone")).grid(row=0, column=2, padx=3, pady=4)
+
+        ttk.Label(general_group, text="Email:").grid(row=1, column=0, padx=3, pady=4, sticky='w')
+        new_email = ttk.Entry(general_group, width=25)
+        new_email.grid(row=1, column=1, padx=3, pady=4, sticky='ew')
+        ttk.Button(general_group, text="Save", width=10, command=lambda: update_setting("new email")).grid(row=1, column=2, padx=3, pady=4)
+
+        # --- Email Notification Option ---
+        ttk.Label(general_group, text="Enable Email Notifications:").grid(row=2, column=0, padx=3, pady=4, sticky='w')
+        email_notify_var = tk.BooleanVar()
+        email_notify_chk = ttk.Checkbutton(general_group, variable=email_notify_var)
+        email_notify_chk.grid(row=2, column=1, padx=3, pady=4, sticky='w')
+        ttk.Button(general_group, text="Save", width=10,
+                command=lambda: update_setting("email_notifications")).grid(row=2, column=2, padx=3, pady=4)
+
+        # ================= RATE LIMITING SECTION =================
+        limit_group = ttk.LabelFrame(settings_container, text="Rate Limiting", padding=8)
+        limit_group.pack(fill="x", padx=8, pady=4)
         limit_group.columnconfigure(1, weight=1)
 
-        ttk.Label(limit_group, text="Time Interval (minutes):").grid(row=0, column=0, padx=5, pady=8, sticky='w')
+        ttk.Label(limit_group, text="Interval (min):").grid(row=0, column=0, padx=3, pady=4, sticky='w')
         interval_var = tk.StringVar()
-        interval_options = [1, 2, 3, 4, 5, 10, 30, 60, 120]
-        interval_menu = ttk.Combobox(limit_group, textvariable=interval_var, values=interval_options, state="readonly")
-        interval_menu.grid(row=0, column=1, padx=5, pady=8, sticky='ew')
+        interval_menu = ttk.Combobox(limit_group, textvariable=interval_var, width=10,
+                                    values=[1, 2, 3, 4, 5, 10, 30, 60, 120], state="readonly")
+        interval_menu.grid(row=0, column=1, padx=3, pady=4, sticky='w')
 
-        ttk.Label(limit_group, text="IP Request Limit (per interval):").grid(row=1, column=0, padx=5, pady=8, sticky='w')
+        ttk.Label(limit_group, text="Requests/Interval:").grid(row=0, column=2, padx=3, pady=4, sticky='w')
         request_limit_var = tk.StringVar()
-        request_limit_options = [10, 20, 30, 40, 50, 100, 300, 600, 1000, 1400, 2000]
-        limit_menu = ttk.Combobox(limit_group, textvariable=request_limit_var, values=request_limit_options, state="readonly")
-        limit_menu.grid(row=1, column=1, padx=5, pady=8, sticky='ew')
-        ttk.Button(limit_group, text="Update", command=lambda: update_setting("max_requests_per_ip")).grid(row=1, column=2, padx=5, pady=8)
+        limit_menu = ttk.Combobox(limit_group, textvariable=request_limit_var, width=10,
+                                values=[10, 20, 30, 40, 50, 100, 300, 600, 1000], state="readonly")
+        limit_menu.grid(row=0, column=3, padx=3, pady=4, sticky='w')
+        ttk.Button(limit_group, text="Save", width=10, command=lambda: update_setting("rate_limit")).grid(row=0, column=4, padx=3, pady=4)
 
-        ttk.Label(limit_group, text="Max Requests Per IP (legacy):").grid(row=2, column=0, padx=5, pady=8, sticky='w')
-        max_requests_per_ip = ttk.Entry(limit_group)
-        max_requests_per_ip.grid(row=2, column=1, padx=5, pady=8, sticky='ew')
-        ttk.Button(limit_group, text="Update", command=lambda: update_setting("max_requests_per_ip")).grid(row=2, column=2, padx=5, pady=8)
-        
-        security_group = ttk.LabelFrame(settings_container, text="Security & Network", padding=15)
-        security_group.pack(fill="x", padx=10, pady=5)
+        ttk.Label(limit_group, text="Max Requests/IP:").grid(row=1, column=0, padx=3, pady=4, sticky='w')
+        max_requests_per_ip = ttk.Entry(limit_group, width=15)
+        max_requests_per_ip.grid(row=1, column=1, padx=3, pady=4, sticky='w')
+        ttk.Button(limit_group, text="Save", width=10, command=lambda: update_setting("max_requests_per_ip")).grid(row=1, column=4, padx=3, pady=4)
+
+        # ================= SECURITY SECTION =================
+        security_group = ttk.LabelFrame(settings_container, text="Security & Network", padding=8)
+        security_group.pack(fill="x", padx=8, pady=4)
         security_group.columnconfigure(1, weight=1)
-        
-        ttk.Label(security_group, text="Honeypot IPs:").grid(row=0, column=0, padx=5, pady=8, sticky='w')
-        honeypot_ips = ttk.Entry(security_group)
-        honeypot_ips.grid(row=0, column=1, padx=5, pady=8, sticky='ew')
-        ttk.Button(security_group, text="Update", command=lambda: update_setting("honeypot_ips")).grid(row=0, column=2, padx=5, pady=8)
 
+        ttk.Label(security_group, text="Honeypot IPs:").grid(row=0, column=0, padx=3, pady=4, sticky='w')
+        honeypot_ips = ttk.Entry(security_group, width=40)
+        honeypot_ips.grid(row=0, column=1, padx=3, pady=4, sticky='ew')
+        ttk.Button(security_group, text="Save", width=10, command=lambda: update_setting("honeypot_ips")).grid(row=0, column=2, padx=3, pady=4)
+
+        ttk.Label(security_group, text="Sensitive Folder:").grid(row=1, column=0, padx=3, pady=4, sticky='w')
+        folder_path = ttk.Entry(security_group, width=40)
+        folder_path.grid(row=1, column=1, padx=3, pady=4, sticky='ew')
+        ttk.Button(security_group, text="Save", width=10, command=lambda: update_setting("sensitive folder")).grid(row=1, column=2, padx=3, pady=4)
+
+        # ================= IP MANAGEMENT SECTION =================
+        ip_group = ttk.LabelFrame(settings_container, text="IP Management", padding=8)
+        ip_group.pack(fill="x", padx=8, pady=4)
+        ip_group.columnconfigure(1, weight=1)
+
+        ttk.Label(ip_group, text="Whitelist IPs:").grid(row=0, column=0, padx=3, pady=4, sticky='w')
+        whitelist = ttk.Entry(ip_group, width=40)
+        whitelist.grid(row=0, column=1, padx=3, pady=4, sticky='ew')
+        ttk.Button(ip_group, text="Save", width=10, command=lambda: update_setting("whitelist")).grid(row=0, column=2, padx=3, pady=4)
+
+        ttk.Label(ip_group, text="Blacklist IPs:").grid(row=1, column=0, padx=3, pady=4, sticky='w')
+        blacklist = ttk.Entry(ip_group, width=40)
+        blacklist.grid(row=1, column=1, padx=3, pady=4, sticky='ew')
+        ttk.Button(ip_group, text="Save", width=10, command=lambda: update_setting("blacklist")).grid(row=1, column=2, padx=3, pady=4)
+
+        # ================= LOAD PREVIOUS VALUES =================
         result = fetch_settings_data()
-        prev_phone, prev_time_limit, prev_max_requests, prev_honeypots, prev_sensative_folder = result[:5] if result else (None, None, None, None, None)
-        
+        prev_phone, prev_time_limit, prev_max_requests, prev_honeypots, prev_sensitive_folder, prev_email_notify = \
+            result[:6] if result else (None, None, None, None, None, False)
+
         prev_hist = {
             phone: prev_phone,
             max_requests_per_ip: prev_max_requests,
             honeypot_ips: prev_honeypots,
+            folder_path: prev_sensitive_folder
         }
-        
+
         for widget, value in prev_hist.items():
             if value is not None:
                 widget.insert(0, value)
+
+        if prev_email_notify:
+            email_notify_var.set(True)
 
 
 
 
 def update_setting(val):
-    global admin_user, email,form_container, admin_pass,phone, time_limit, honeypot_ips, folder_path, allowed_ports, port_services
-    global interval_var, request_limit_var,port,service
+    global admin_user, email,form_container, admin_pass,phone, time_limit, honeypot_ips, folder_path, allowed_ports, port_services,whitelist,blacklist
+    global interval_var, request_limit_var,port,service,email_notify_var
     dt=db()
     connection=dt[0]
     cursor=dt[1]
@@ -618,7 +661,7 @@ def update_setting(val):
             query = """ UPDATE Settings SET phone = %s  """
             cursor.execute(query, (phone.get(),))
             connection.commit()
-
+            #adding here the button successful or error message
     if val=="port_info":
             jsonins("port",port.get(),service.get())
 
@@ -635,16 +678,82 @@ def update_setting(val):
     if val=="honeypot_ips":
             ins_honey(honeypot_ips.get())
     
-    if val=="folder_path":
+    if val=="sensitive folder":
             query = """ UPDATE Settings SET sensitive_folders= %s """
             cursor.execute(query, (folder_path.get(),))
             connection.commit()
     if val=="allowed_port":
         
-        query = """ UPDATE Settings SET allowed_ip = %s """
-        cursor.execute(query, (allowed_ports.get(),))
+        ports_raw = allowed_ports.get().strip()
+    
+        # Convert to valid JSON (example: "80,443,22" → [80, 443, 22])
+        ports_list = [int(p.strip()) for p in ports_raw.split(",") if p.strip().isdigit()]
+        ports_json = json.dumps(ports_list)
+
+        query = "UPDATE settings SET allowed_ports = %s"
+        cursor.execute(query, (ports_json,))
         connection.commit()
 
+        messagebox.showinfo("Success", "Allowed ports updated successfully!")
+
+
+    if val=="new email":
+        
+        query = """ UPDATE Settings SET email = %s """
+        cursor.execute(query, (new_email.get(),))
+        connection.commit()
+
+    if val=="sensative_folder":
+        
+        query = """ UPDATE Settings SET sensitive_folders = %s """
+        cursor.execute(query, (sensative_folder.get(),))
+        connection.commit()
+
+    if val=="email_notifications":
+        query = """ UPDATE Settings SET email_alerts_enabled = %s """
+        cursor.execute(query, (email_notify_var.get(),))
+        connection.commit()
+
+    if val=="max_requests_per_ip":
+        query = """ UPDATE Settings SET request_time_limit = %s """
+        cursor.execute(query, (max_requests_per_ip.get(),))
+        connection.commit()
+    if val in ["whitelist", "blacklist"]:
+        IPS_ob = IPS
+
+        # Get user-entered IP (from correct widget)
+        ip_value = (whitelist.get() if val == "whitelist" else blacklist.get()).strip()
+
+        if not ip_value:
+            messagebox.showwarning("Input Error", "Please enter an IP address.")
+            return
+
+      
+        all_whitelist = IPS_ob.whitelist_ip("all")
+        all_blacklist = IPS_ob.blacklist_ip("all")
+
+     
+
+        if ip_value in all_whitelist:
+            messagebox.showerror("Not Allowed", f"{ip_value} already exists in Whitelist.")
+            return
+
+        if ip_value in all_blacklist:
+            messagebox.showerror("Not Allowed", f"{ip_value} already exists in Blacklist.")
+            return
+
+
+        if val == "whitelist":
+            IPS_ob.whitelist_ip("add", ip_value)
+            messagebox.showinfo("Success", f"{ip_value} added to Whitelist.")
+            return
+
+        if val == "blacklist":
+            IPS_ob.blacklist_ip("add", ip_value)
+            messagebox.showinfo("Success", f"{ip_value} added to Blacklist.")
+            return
+        
+    
 def dashboardshow():
     sidebar.pack()
     global connection,cursor
@@ -661,7 +770,7 @@ def dashboardshow():
     thread.daemon = True # This ensures the thread exits when the main program does
     thread.start()
     global refresh_jobs
-    job_id = root.after(5000, lambda: data_to_show("Dashboard"))
+    job_id = root.after(10000, lambda: data_to_show("Dashboard"))
     refresh_jobs.append(job_id)
 def connect_db():
     return mysql.connector.connect(
@@ -676,7 +785,7 @@ def datamanage(page):
     if page=="Dashboard":
         return ["Dashboard"]
     if page =="IP Monitor":
-       return ["IP","ip address"," request time","count of occur","blocked","block time","local ip","country","recent request"] 
+       return ["IP","ip address"," request time","count of occur","blocked","local ip","block time","country","recent request"] 
     elif page=="Logs":
        return ["iprequest_junction","id","ip address","port number","protocol"," request time"] 
     elif page=="Port Monitor":
@@ -755,7 +864,7 @@ def update_gui_with_data(fetched_rows, cols, page_name):
     
     if page_name != "Setting":
         global refresh_jobs
-        job_id = root.after(5000, lambda: data_to_show(page_name))
+        job_id = root.after(10000, lambda: data_to_show(page_name))
         refresh_jobs.append(job_id)
 
 def data_to_show(page_name):

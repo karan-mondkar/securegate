@@ -91,12 +91,51 @@ class SYS_INFO:
 
             #ip_request_junction table
             cursor.execute("""
-            CREATE TABLE IF NOT EXISTS iprequest_junction (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            ip_address VARCHAR(45),
-            port_number SMALLINT UNSIGNED,
-            protocol VARCHAR(10) ,
-            request_time DATETIME)
+         CREATE TABLE IF NOT EXISTS iprequest_junction (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+
+    -- Time
+    request_time DATETIME,
+                           
+    -- Network identity
+    src_ip VARCHAR(45),
+    dst_ip VARCHAR(45),
+    src_port SMALLINT UNSIGNED,
+    dst_port SMALLINT UNSIGNED,
+    protocol VARCHAR(10),
+    interface_name VARCHAR(30),
+
+    -- Transport details
+    tcp_flags VARCHAR(10),
+    ttl SMALLINT UNSIGNED,
+    window_size INT,
+    seq_num BIGINT,
+    ack_num BIGINT,
+
+    -- Packet metadata
+    packet_length SMALLINT UNSIGNED,
+    payload_size SMALLINT UNSIGNED,
+
+    -- L2 / L3
+    mac_src VARCHAR(17),
+    mac_dst VARCHAR(17),
+    ether_type VARCHAR(10),
+    ip_flags VARCHAR(10),
+    fragment_offset SMALLINT,
+
+    -- ICMP / IPv6
+    icmp_type TINYINT,
+    icmp_code TINYINT,
+    ipv6_flow_label INT,
+    ipv6_traffic_class SMALLINT,
+
+
+    INDEX(src_ip),
+    INDEX(dst_ip),
+    INDEX(protocol),
+    INDEX(dst_port),
+    INDEX(request_time)
+)
             """)
 
             #all setting
@@ -184,6 +223,7 @@ CREATE TABLE IF NOT EXISTS settings (
                     lines = f.readlines()
 
                 for line in lines:
+                    print(line)
                     counter_temp2+=1
                     print("counter temp2  ",counter_temp2)
                     print("Processing line:", line.strip())
@@ -218,24 +258,60 @@ CREATE TABLE IF NOT EXISTS settings (
                 while not request_queue.empty():
                     try:
                         curr_request = request_queue.get(timeout=1)
-                        print(curr_request)
-                        ip=str(curr_request["Src_IP"])
-                        time=curr_request["Time"]
-                        request_type=str(curr_request["Dst_Port"])
-                        network_protocol=str(curr_request["Protocol"])
-                        destination_ip=str(curr_request["Dst_IP"])
 
-                        insertion_time = datetime.strptime(time, "%Y-%m-%d %H:%M:%S.%f")
+                        time_str = curr_request.get("Time")
+                        request_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S.%f")
+
+                        # ---- Network identity ----
+                        src_ip = str(curr_request.get("Src_IP"))
+                        dst_ip = str(curr_request.get("Dst_IP"))
+
+                        src_port = curr_request.get("Src_Port")
+                        dst_port = curr_request.get("Dst_Port")
+
+                        protocol = str(curr_request.get("Protocol"))
+                        interface_name = str(curr_request.get("Interface"))
+
+                        # ---- Transport details ----
+                        tcp_flags = curr_request.get("Flags")
+                        ttl = curr_request.get("TTL")
+                        window_size = curr_request.get("Window")
+                        seq_num = curr_request.get("Seq")
+                        ack_num = curr_request.get("Ack")
+
+                        # ---- Packet metadata ----
+                        packet_length = curr_request.get("Packet_Length")
+                        payload_size = curr_request.get("Payload_Size")
+
+                        # ---- L2 / L3 ----
+                        mac_src = curr_request.get("MAC_Src")
+                        mac_dst = curr_request.get("MAC_Dst")
+                        ether_type = curr_request.get("Ether_Type")
+                        ip_flags = curr_request.get("IP_Flags")
+                        fragment_offset = curr_request.get("Fragment_Offset")
+
+                        # ---- ICMP / IPv6 ----
+                        icmp_type = curr_request.get("ICMP_Type")
+                        icmp_code = curr_request.get("ICMP_Code")
+                        ipv6_flow_label = curr_request.get("IPv6_FlowLabel")
+                        ipv6_traffic_class = curr_request.get("IPv6_TrafficClass")
+
+                        insertion_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S.%f")
                         try:
                             #print("checking wait")
-                            self.ips.ins_ip(ip,time)
+                            self.ips.ins_ip(src_ip,time_str)
                             #print("ins_ip")                    
-                            self.request.ins_request(request_type,time)
+                            self.request.ins_request(dst_port,time_str)
                             #print("ins_request")
                             
-                            self.iprequest.ins_iprequest(ip,request_type,network_protocol,time)
+                            self.iprequest.ins_iprequest(request_time,src_ip, dst_ip, src_port,
+                             dst_port, protocol, interface_name,tcp_flags, ttl, window_size, seq_num,
+                             ack_num,packet_length, payload_size,mac_src, mac_dst, ether_type,
+                             ip_flags, fragment_offset,icmp_type, icmp_code,
+                               ipv6_flow_label, ipv6_traffic_class
+)
                             #print("ins_iprequest")
-                            self.network_protocol_class.ins_network_protocol(network_protocol,time)
+                            self.network_protocol_class.ins_network_protocol(protocol,time_str)
                             #print("ins_network_protocol")
                         except Exception as e:
                             print(e)
@@ -744,18 +820,48 @@ class IPREQUEST:
         self.connection=connection
         self.cursor=cursor
         
-    def ins_iprequest(self,ip,port,network_protocol,time):
-        print(ip,port,network_protocol,time)
+    def ins_iprequest(
+    self,
+    request_time,
+    src_ip, dst_ip, src_port, dst_port, protocol, interface_name,
+    tcp_flags, ttl, window_size, seq_num, ack_num,
+    packet_length, payload_size,
+    mac_src, mac_dst, ether_type, ip_flags, fragment_offset,
+    icmp_type, icmp_code, ipv6_flow_label, ipv6_traffic_class
+):
         try:
-            #   ---ata vrchi request_time chi value ithe assign  hoil
-            query = """ INSERT INTO iprequest_junction (ip_address,port_number ,protocol,request_time) VALUES (%s,%s,%s,%s)
-           
-        """
-            self.cursor.execute(query, (ip,port,network_protocol,time,))
+            query = """
+            INSERT INTO iprequest_junction (
+                request_time,
+                src_ip, dst_ip, src_port, dst_port, protocol, interface_name,
+                tcp_flags, ttl, window_size, seq_num, ack_num,
+                packet_length, payload_size,
+                mac_src, mac_dst, ether_type, ip_flags, fragment_offset,
+                icmp_type, icmp_code, ipv6_flow_label, ipv6_traffic_class
+            ) VALUES (
+                %s,%s,%s,%s,%s,%s,%s,
+                %s,%s,%s,%s,%s,
+                %s,%s,
+                %s,%s,%s,%s,%s,
+                %s,%s,%s,%s
+            )
+            """
+
+            values = (
+                request_time,
+                src_ip, dst_ip, src_port, dst_port, protocol, interface_name,
+                tcp_flags, ttl, window_size, seq_num, ack_num,
+                packet_length, payload_size,
+                mac_src, mac_dst, ether_type, ip_flags, fragment_offset,
+                icmp_type, icmp_code, ipv6_flow_label, ipv6_traffic_class
+            )
+
+            self.cursor.execute(query, values)
             self.connection.commit()
+
         except Exception as e:
-            print(e)
-        #code checking from here
+            print("[DB INSERT ERROR]", e)
+
     
     def is_iprequest_suspicious(count,limit):
             pass

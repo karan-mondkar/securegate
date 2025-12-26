@@ -770,7 +770,7 @@ def dashboardshow():
     thread.daemon = True # This ensures the thread exits when the main program does
     thread.start()
     global refresh_jobs
-    job_id = root.after(5000, lambda: data_to_show("Dashboard"))
+    job_id = root.after(10000, lambda: data_to_show("Dashboard"))
     refresh_jobs.append(job_id)
 def connect_db():
     return mysql.connector.connect(
@@ -864,7 +864,7 @@ def update_gui_with_data(fetched_rows, cols, page_name):
     
     if page_name != "Setting":
         global refresh_jobs
-        job_id = root.after(5000, lambda: data_to_show(page_name))
+        job_id = root.after(10000, lambda: data_to_show(page_name))
         refresh_jobs.append(job_id)
 
 def data_to_show(page_name):
