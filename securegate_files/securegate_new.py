@@ -24,8 +24,10 @@ from email.mime.multipart import MIMEMultipart
 
 
 
+from mailersend import MailerSendClient, EmailBuilder
 
-
+from pydrive.auth import GoogleAuth
+from pydrive.drive import GoogleDrive
 
 counter_temp=0
 counter_temp2=0
@@ -89,18 +91,58 @@ class SYS_INFO:
 
             #ip_request_junction table
             cursor.execute("""
-            CREATE TABLE IF NOT EXISTS iprequest_junction (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            ip_address VARCHAR(45),
-            port_number SMALLINT UNSIGNED,
-            protocol VARCHAR(10) ,
-            request_time DATETIME)
+         CREATE TABLE IF NOT EXISTS iprequest_junction (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+
+    -- Time
+    request_time DATETIME,
+                           
+    -- Network identity
+    src_ip VARCHAR(45),
+    dst_ip VARCHAR(45),
+    src_port SMALLINT UNSIGNED,
+    dst_port SMALLINT UNSIGNED,
+    protocol VARCHAR(10),
+    interface_name VARCHAR(30),
+
+    -- Transport details
+    tcp_flags VARCHAR(10),
+    ttl SMALLINT UNSIGNED,
+    window_size INT,
+    seq_num BIGINT,
+    ack_num BIGINT,
+
+    -- Packet metadata
+    packet_length SMALLINT UNSIGNED,
+    payload_size SMALLINT UNSIGNED,
+
+    -- L2 / L3
+    mac_src VARCHAR(17),
+    mac_dst VARCHAR(17),
+    ether_type VARCHAR(10),
+    ip_flags VARCHAR(10),
+    fragment_offset SMALLINT,
+
+    -- ICMP / IPv6
+    icmp_type TINYINT,
+    icmp_code TINYINT,
+    ipv6_flow_label INT,
+    ipv6_traffic_class SMALLINT,
+
+
+    INDEX(src_ip),
+    INDEX(dst_ip),
+    INDEX(protocol),
+    INDEX(dst_port),
+    INDEX(request_time)
+)
             """)
 
             #all setting
             cursor.execute("""
             
 CREATE TABLE IF NOT EXISTS settings (
+    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     admin_name VARCHAR(50) ,
     password_hash VARCHAR(255) ,
     email VARCHAR(50),
@@ -110,15 +152,16 @@ CREATE TABLE IF NOT EXISTS settings (
     max_requests_per_ip JSON,
 
     honeypot_ips VARCHAR(255),
-    allowed_ports JSON,
+    allowed_ports LONGTEXT,
     sensitive_folders VARCHAR(255),
 
-    whitelisted_ips JSON,
-    blacklisted_ips JSON,
+    whitelisted_ips LONGTEXT NULL,
+    blacklisted_ips LONGTEXT NULL,
 
     upload_folder VARCHAR(255),
     email_alerts_enabled BOOLEAN,
-
+    email_token TEXT,
+    sender_email TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 
@@ -180,6 +223,7 @@ CREATE TABLE IF NOT EXISTS settings (
                     lines = f.readlines()
 
                 for line in lines:
+                    print(line)
                     counter_temp2+=1
                     print("counter temp2  ",counter_temp2)
                     print("Processing line:", line.strip())
@@ -214,24 +258,60 @@ CREATE TABLE IF NOT EXISTS settings (
                 while not request_queue.empty():
                     try:
                         curr_request = request_queue.get(timeout=1)
-                        print(curr_request)
-                        ip=str(curr_request["Src_IP"])
-                        time=curr_request["Time"]
-                        request_type=str(curr_request["Dst_Port"])
-                        network_protocol=str(curr_request["Protocol"])
-                        destination_ip=str(curr_request["Dst_IP"])
 
-                        insertion_time = datetime.strptime(time, "%Y-%m-%d %H:%M:%S.%f")
+                        time_str = curr_request.get("Time")
+                        request_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S.%f")
+
+                        # ---- Network identity ----
+                        src_ip = str(curr_request.get("Src_IP"))
+                        dst_ip = str(curr_request.get("Dst_IP"))
+
+                        src_port = curr_request.get("Src_Port")
+                        dst_port = curr_request.get("Dst_Port")
+
+                        protocol = str(curr_request.get("Protocol"))
+                        interface_name = str(curr_request.get("Interface"))
+
+                        # ---- Transport details ----
+                        tcp_flags = curr_request.get("Flags")
+                        ttl = curr_request.get("TTL")
+                        window_size = curr_request.get("Window")
+                        seq_num = curr_request.get("Seq")
+                        ack_num = curr_request.get("Ack")
+
+                        # ---- Packet metadata ----
+                        packet_length = curr_request.get("Packet_Length")
+                        payload_size = curr_request.get("Payload_Size")
+
+                        # ---- L2 / L3 ----
+                        mac_src = curr_request.get("MAC_Src")
+                        mac_dst = curr_request.get("MAC_Dst")
+                        ether_type = curr_request.get("Ether_Type")
+                        ip_flags = curr_request.get("IP_Flags")
+                        fragment_offset = curr_request.get("Fragment_Offset")
+
+                        # ---- ICMP / IPv6 ----
+                        icmp_type = curr_request.get("ICMP_Type")
+                        icmp_code = curr_request.get("ICMP_Code")
+                        ipv6_flow_label = curr_request.get("IPv6_FlowLabel")
+                        ipv6_traffic_class = curr_request.get("IPv6_TrafficClass")
+
+                        insertion_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S.%f")
                         try:
                             #print("checking wait")
-                            self.ips.ins_ip(ip,time)
+                            self.ips.ins_ip(src_ip,time_str)
                             #print("ins_ip")                    
-                            self.request.ins_request(request_type,time)
+                            self.request.ins_request(dst_port,time_str)
                             #print("ins_request")
                             
-                            self.iprequest.ins_iprequest(ip,request_type,network_protocol,time)
+                            self.iprequest.ins_iprequest(request_time,src_ip, dst_ip, src_port,
+                             dst_port, protocol, interface_name,tcp_flags, ttl, window_size, seq_num,
+                             ack_num,packet_length, payload_size,mac_src, mac_dst, ether_type,
+                             ip_flags, fragment_offset,icmp_type, icmp_code,
+                               ipv6_flow_label, ipv6_traffic_class
+)
                             #print("ins_iprequest")
-                            self.network_protocol_class.ins_network_protocol(network_protocol,time)
+                            self.network_protocol_class.ins_network_protocol(protocol,time_str)
                             #print("ins_network_protocol")
                         except Exception as e:
                             print(e)
@@ -279,6 +359,8 @@ CREATE TABLE IF NOT EXISTS settings (
     def check_suspiciousness(self):
         global insertion_time,timer,ipreqlimit
         try:
+            request.is_request_suspicious()
+
             cursor.execute("SELECT max_requests_per_ip from settings")
             result = cursor.fetchone()
 
@@ -429,6 +511,23 @@ class IPS:
             print("error insertion :-",e)
      
     def block_ip(self,ip_address,blkps):
+
+        cursor.execute("SELECT whitelisted_ips FROM settings LIMIT 1")
+        result = cursor.fetchone()
+
+        if not result or not result[0]:
+            return 
+
+        whitelist = result[0].split(",")  # CSV → list
+
+    
+        whitelist = [x.strip() for x in whitelist if x.strip()]
+
+       
+        if ip_address in whitelist:
+            print(f"[BLOCKED SECTION:] {ip_address} is whitelisted, unblocked.")
+            return
+
         block_list=self.block_list()
         if ip_address not in block_list:
             try:
@@ -490,6 +589,7 @@ class IPS:
         self.cursor.execute(query,)
         blk_list=self.cursor.fetchall()
         return blk_list         
+    
     def is_ip_suspicious(self,request_counter, expected_requests, confidence_level=0.99):
 
         print(f"request counter {request_counter} expected_request {expected_requests}  confidence_level: {confidence_level} ")
@@ -502,8 +602,103 @@ class IPS:
         z_threshold = norm.ppf(confidence_level)
 
         return z_score > z_threshold
+    
+    def whitelist_ip(action, ip=None):
+        try:
+            cursor.execute("SELECT whitelisted_ips FROM settings LIMIT 1")
+            result = cursor.fetchone()
 
+            # Handle NULL or empty
+            current_ips = result[0] if result else None
 
+            # Convert bytes → str
+            if isinstance(current_ips, bytes):
+                current_ips = current_ips.decode()
+
+            # Convert string → list
+            if current_ips:
+                ip_list = [x.strip() for x in current_ips.split(",") if x.strip()]
+            else:
+                ip_list = []
+
+            # --------------------
+            # ADD
+            # --------------------
+            if action == "add" and ip:
+                if ip not in ip_list:
+                    ip_list.append(ip)
+                    print(f"[WHITELIST] Added: {ip}")
+                else:
+                    print(f"[WHITELIST] Already exists: {ip}")
+
+            # --------------------
+            # REMOVE
+            # --------------------
+            elif action == "remove" and ip:
+                if ip in ip_list:
+                    ip_list.remove(ip)
+                    print(f"[WHITELIST] Removed: {ip}")
+                else:
+                    print(f"[WHITELIST] IP not found: {ip}")
+
+            # --------------------
+            # SHOW ALL
+            # --------------------
+            elif action == "all":
+                return ip_list
+
+            # --------------------
+            # Save back to DB
+            # --------------------
+            final_text = ",".join(ip_list) if ip_list else None  # NULL instead of ''
+
+            cursor.execute(
+                "UPDATE settings SET whitelisted_ips=%s",
+                (final_text,)
+            )
+            connection.commit()
+
+        except Exception as e:
+            print("[WHITELIST ERROR]:", e)
+
+    def blacklist_ip(action, ip=None):
+        try:
+            blocked_until = datetime.now() + timedelta(days=365 * 100)
+            ips.block_ip(ip,blocked_until)
+            cursor.execute("SELECT blacklisted_ips FROM settings LIMIT 1")
+            result = cursor.fetchone()
+
+            raw = result[0] if result else None
+
+            if raw is None:
+                ip_list = []
+            else:
+                if isinstance(raw, bytes):
+                    raw = raw.decode()
+
+                try:
+                    ip_list = json.loads(raw)
+                except:
+                    ip_list = []
+
+            if action == "add" and ip:
+                if ip not in ip_list:
+                    ip_list.append(ip)
+
+            elif action == "remove" and ip:
+                if ip in ip_list:
+                    ip_list.remove(ip)
+
+            elif action == "all":
+                return ip_list
+
+            final_json = json.dumps(ip_list)
+
+            cursor.execute("UPDATE settings SET blacklisted_ips=%s", (final_json,))
+            connection.commit()
+
+        except Exception as e:
+            print("[BLACKLIST ERROR]:", e)
 class REQUEST:
     
     def __init__(self,connection,cursor):
@@ -524,8 +719,89 @@ class REQUEST:
 
 
 
-    def is_request_suspicious(count,limit):
-        pass
+    def is_request_suspicious(self):
+        try:
+            suspicious_percent = 20
+            minimum_request = 100
+
+            # -------------------------------------------------------
+            # 1. Fetch allowed ports from settings
+            # -------------------------------------------------------
+            self.cursor.execute("SELECT allowed_ports FROM settings LIMIT 1")
+            res = self.cursor.fetchone()
+
+            if not res or not res[0]:
+                print("[ERROR] No allowed ports found in DB.")
+                return False
+
+            # allowed_ports is stored as CSV: "22,80,443"
+            valid_ports = {
+                int(p.strip())
+                for p in res[0].split(",")
+                if p.strip().isdigit()
+            }
+            print("Valid Ports:", valid_ports)
+
+            # -------------------------------------------------------
+            # 2. Get last 1 hour requests
+            # -------------------------------------------------------
+            one_hour_ago = datetime.now() - timedelta(hours=1)
+
+            self.cursor.execute("""
+                SELECT port, request_time 
+                FROM iprequest 
+                WHERE request_time >= %s
+            """, (one_hour_ago,))
+
+            logs = self.cursor.fetchall()
+
+            if not logs:
+                print("[INFO] No requests found in last 1 hour.")
+                return False
+
+            total_requests = len(logs)
+            print(f"Total Requests (1 hour): {total_requests}")
+
+            # -------------------------------------------------------
+            # 3. Ignore detection if traffic too low
+            # -------------------------------------------------------
+            if total_requests <= minimum_request:
+                print("[INFO] Not enough traffic (< minimum threshold).")
+                return False
+
+            # -------------------------------------------------------
+            # 4. Count invalid port requests
+            # -------------------------------------------------------
+            invalid_count = 0
+
+            for row in logs:
+                port = int(row[0])  # row[0] = port (tuple index)
+                if port not in valid_ports:
+                    invalid_count += 1
+
+            print("Invalid Port Requests:", invalid_count)
+
+            # -------------------------------------------------------
+            # 5. Calculate invalid percentage
+            # -------------------------------------------------------
+            percent_invalid = (invalid_count / total_requests) * 100
+            print(f"Invalid %: {percent_invalid:.2f}%")
+
+            # -------------------------------------------------------
+            # 6. Compare & return result
+            # -------------------------------------------------------
+            if percent_invalid >= suspicious_percent:
+                print("[ALERT] Suspicious traffic detected!")
+                return True
+
+            return False
+
+        except Exception as e:
+            print("[ERROR in suspicious check]:", e)
+            return False
+
+
+
     def securegate_response(protocol,limit,time_interval):
         pass        
                    
@@ -544,18 +820,48 @@ class IPREQUEST:
         self.connection=connection
         self.cursor=cursor
         
-    def ins_iprequest(self,ip,port,network_protocol,time):
-        print(ip,port,network_protocol,time)
+    def ins_iprequest(
+    self,
+    request_time,
+    src_ip, dst_ip, src_port, dst_port, protocol, interface_name,
+    tcp_flags, ttl, window_size, seq_num, ack_num,
+    packet_length, payload_size,
+    mac_src, mac_dst, ether_type, ip_flags, fragment_offset,
+    icmp_type, icmp_code, ipv6_flow_label, ipv6_traffic_class
+):
         try:
-            #   ---ata vrchi request_time chi value ithe assign  hoil
-            query = """ INSERT INTO iprequest_junction (ip_address,port_number ,protocol,request_time) VALUES (%s,%s,%s,%s)
-           
-        """
-            self.cursor.execute(query, (ip,port,network_protocol,time,))
+            query = """
+            INSERT INTO iprequest_junction (
+                request_time,
+                src_ip, dst_ip, src_port, dst_port, protocol, interface_name,
+                tcp_flags, ttl, window_size, seq_num, ack_num,
+                packet_length, payload_size,
+                mac_src, mac_dst, ether_type, ip_flags, fragment_offset,
+                icmp_type, icmp_code, ipv6_flow_label, ipv6_traffic_class
+            ) VALUES (
+                %s,%s,%s,%s,%s,%s,%s,
+                %s,%s,%s,%s,%s,
+                %s,%s,
+                %s,%s,%s,%s,%s,
+                %s,%s,%s,%s
+            )
+            """
+
+            values = (
+                request_time,
+                src_ip, dst_ip, src_port, dst_port, protocol, interface_name,
+                tcp_flags, ttl, window_size, seq_num, ack_num,
+                packet_length, payload_size,
+                mac_src, mac_dst, ether_type, ip_flags, fragment_offset,
+                icmp_type, icmp_code, ipv6_flow_label, ipv6_traffic_class
+            )
+
+            self.cursor.execute(query, values)
             self.connection.commit()
+
         except Exception as e:
-            print(e)
-        #code checking from here
+            print("[DB INSERT ERROR]", e)
+
     
     def is_iprequest_suspicious(count,limit):
             pass
@@ -692,47 +998,151 @@ class EMERGENCY_ALERT:
         except Exception as e:
             print(f"Error changing permissions for {file_path}: {e}")
 
-    # Example usage:
-    file_path = r'C:\path\to\your\file.txt'  # Change this to the appropriate file path
-    set_permissions(file_path)
+        
+    def generate_email(alert_type, data=None):
+        if data is None:
+            data = {}
 
-    restore_permissions(file_path)
+        if alert_type == "intrusion":
+            subject = "⚠️ Intrusion Alert - Suspicious Activity Detected"
+            message = (
+                f"Suspicious activity detected on your SecureGate system.\n"
+                f"Source IP: {data.get('ip', 'Unknown')}\n"
+                f"Detected at: {data.get('time', 'Unknown')}\n"
+                f"Request Type: {data.get('protocol', 'Unknown')}\n\n"
+                f"Recommended Action: Review the logs immediately."
+            )
 
-    
+        elif alert_type == "ip_block":
+            subject = f"🚫 IP Blocked - {data.get('ip', 'Unknown')}"
+            message = (
+                f"The following IP has been blocked for exceeding limits:\n"
+                f"IP Address: {data.get('ip', 'Unknown')}\n"
+                f"Blocked at: {data.get('time', 'Unknown')}\n"
+                f"Reason: {data.get('reason', 'Too many requests')}\n\n"
+                f"Check SecureGate logs for more details."
+            )
 
+        elif alert_type == "honeypot_trigger":
+            subject = f"🐍 Honeypot Triggered - {data.get('ip', 'Unknown')}"
+            message = (
+                f"Honeypot diversion triggered for IP: {data.get('ip', 'Unknown')}\n"
+                f"Timestamp: {data.get('time', 'Unknown')}\n"
+                f"Redirected to: {data.get('honeypot_ip', 'Unknown')}\n\n"
+                f"SecureGate is monitoring attacker behavior."
+            )
+
+        else:
+            subject = "📢 SecureGate Notification"
+            message = f"An event has occurred:\n{data}"
+
+        return subject, message
+
+
+    # ✅ Function to Fetch Email Data (API Token, Sender, Receiver)
+    def get_email(role):
+        try:
+            if role == "sender":
+                cursor.execute("SELECT email_token, sender_email FROM settings LIMIT 1")
+                result = cursor.fetchone()
+                cursor.close()
+                connection.close()
+                if result:
+                    return result  # (token, sender_email)
+                else:
+                    print("[!] No sender token/email found.")
+                    return None
+
+            elif role == "receiver":
+                cursor.execute("SELECT email FROM settings LIMIT 1")
+                result = cursor.fetchone()
+                cursor.close()
+                connection.close()
+                if result and result[0]:
+                    return result[0]
+                else:
+                    print("[!] No receiver email found.")
+                    return None
+
+            else:
+                print("[!] Invalid argument: use 'sender' or 'receiver'")
+                return None
+
+        except Exception as e:
+            print(f"[!] Database error: {e}")
+            return None
+
+
+    # ✅ Function to Send Email via MailerSend API
     def send_email_alert(subject, message):
         try:
-            # 📧 EMAIL CONFIGURATION
-            SMTP_SERVER = "smtp.gmail.com"   # for gmail service
-            SMTP_PORT = 587
-            SENDER_EMAIL = "your_email@gmail.com"
-            SENDER_PASSWORD = "your_app_password"   # Use App Password, not normal password
-            RECEIVER_EMAIL = "alert_receiver@gmail.com"    
+            email_info = EMERGENCY_ALERT.get_email("sender")
+            if not email_info:
+                print("[!] Cannot fetch sender info from DB.")
+                return
 
+            token, sender_email = email_info
+            receiver_email = EMERGENCY_ALERT.get_email("receiver") or sender_email  # fallback to sender
 
-            msg = MIMEMultipart()
-            msg["From"] = SENDER_EMAIL
-            msg["To"] = RECEIVER_EMAIL
-            msg["Subject"] = subject
+            if not token:
+                print("[!] Missing MailerSend API token in database.")
+                return
 
-            msg.attach(MIMEText(message, "plain"))
+            ms = MailerSendClient(api_key=token)
 
-            server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-            server.starttls()
-            server.login(SENDER_EMAIL, SENDER_PASSWORD)
-            server.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, msg.as_string())
-            server.quit()
-            print("[+] Email alert sent successfully!")
+            # --- Build Email ---
+            email = (
+                EmailBuilder()
+                .from_email("alerts@securegate.work.gd", "SecureGate System")  # verified domain
+                .to_many([{"email": receiver_email, "name": "Admin"}])
+                .subject(subject)
+                .html(f"<h3>{subject}</h3><p>{message}</p>")
+                .text(message)
+                .build()
+            )
+
+            # --- Send Email ---
+            response = ms.emails.send(email)
+            print("[+] Email sent successfully via MailerSend!")
+            print("Response:", response)
+
         except Exception as e:
             print(f"[!] Failed to send email: {e}")
 
 
+    def upload_sensitive_files_to_drive():
+        try:
+            cursor.execute("SELECT upload_folder, sensitive_folders FROM settings LIMIT 1")
+            result = cursor.fetchone()
+            cursor.close()
+            connection.close()
+
+            if not result:
+                print("[!] No folder paths found in database.")
+                return
+
+            upload_folder, sensitive_folder = result
+            if not upload_folder or not sensitive_folder:
+                print(" Missing upload or sensitive folder path.")
+                return
 
 
+            try:
+                cmd = ["rclone", "copy", sensitive_folder, upload_folder]
+                result = subprocess.run(cmd, capture_output=True, text=True)
 
+                if result.returncode == 0:
+                    print("[UPLOAD SUCCESS]", sensitive_folder)
+                else:
+                    print("[UPLOAD ERROR]", result.stderr)
 
+            except Exception as e:
+                print("[EXCEPTION]", e)
+            
+            print(f"[+] All sensitive files uploaded to '{upload_folder}' successfully!")
 
-
+        except Exception as e:
+            print(f"[!] Error: {e}")    
 
 
 
@@ -772,83 +1182,14 @@ iprequest=IPREQUEST(connection,cursor)
 network_protocol=NETWORK_PROTOCOL(connection,cursor)
 sys_info=SYS_INFO(ips,request,iprequest,network_protocol,connection,cursor)
 
-
-
-    
-
-import threading
-
-
-while True:
-    print("monitor request")
-    sys_info.monitor_requests()
-    print("process")
-    sys_info.process()
-    print("check")
-    sys_info.check_suspiciousness()
-
-
-
-
-
-'''
-
-import threading
-
-# Start all threads only ONCE
-monitor_thread = threading.Thread(target=sys_info.monitor_requests, daemon=True)
-process_thread = threading.Thread(target=sys_info.process, daemon=True)
-check_thread = threading.Thread(target=sys_info.check, daemon=True)
-
-# Start the threads
-monitor_thread.start()
-process_thread.start()
-check_thread.start()
-
-
-'''
-
-
-
-"""
-def execute():
+RUN_ENGINE=True
+if __name__ == "__main__" and RUN_ENGINE:
     while True:
-        connection = mysql.connector.connect(
-                    host="localhost",
-                    user="root",
-                    password="",
-                    port=3306,
-                    database=db_name
-                )
-        connection1 = mysql.connector.connect(
-                    host="localhost",
-                    user="root",
-                    password="",
-                    port=3306,
-                    database=db_name
-                )
-        connection2 = mysql.connector.connect(
-                    host="localhost",
-                    user="root",
-                    password="",
-                    port=3306,
-                    database=db_name
-                )
-        cursor=connection.cursor(buffered=True)
-        cursor1=connection1.cursor(buffered=True)
-        cursor2=connection2.cursor(buffered=True)
-        
-        request=REQUEST(connection,cursor)
-        iprequest=IPREQUEST(connection1,cursor1)
-        sys_info=SYS_INFO(ips,request,iprequest,connection1,cursor2)
-        monitor_thread = threading.Thread(target=sys_info.monitor_requests, daemon=True)
-        monitor_thread.start()
-        process_thread = threading.Thread(target=sys_info.process, daemon=True)
-        process_thread.start()
-        check_thread = threading.Thread(target=sys_info.check, daemon=True)
-        check_thread.start()
-execute()
-"""
-
+        print("monitor request")
+        sys_info.monitor_requests()
+        print("process")
+        sys_info.process()
+        print("check suspiciousness")
+        sys_info.check_suspiciousness()
 
 
