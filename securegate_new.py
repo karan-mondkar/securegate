@@ -2,7 +2,7 @@ import mysql.connector #db connection
 import subprocess #block unblock fun sathi
 import socket # internet connection
 import requests #country find
-
+import ipaddress
 import json
 import time 
 from datetime import datetime,timedelta
@@ -24,7 +24,7 @@ from email.mime.multipart import MIMEMultipart
 
 
 
-from mailersend import MailerSendClient, EmailBuilder
+#from mailersend import MailerSendClient, EmailBuilder
 
 from pydrive.auth import GoogleAuth
 from pydrive.drive import GoogleDrive
@@ -38,8 +38,9 @@ request_queue=queue.Queue(maxsize=500000)
 insertion_time=datetime.now()
 
 
-
-
+LAST_WHITELIST_FETCH = 0
+WHITELIST_REFRESH_INTERVAL = 5  # seconds
+WHITELIST_CACHE = set()
 
 from scipy.stats import norm
 
@@ -176,6 +177,22 @@ CREATE TABLE IF NOT EXISTS settings (
     first_seen DATETIME,                     
     last_seen DATETIME                       
     )""")
+            
+
+            cursor.execute("""CREATE TABLE IF NOT EXISTS attack_state (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    attack_type VARCHAR(30),
+    src_ip VARCHAR(45),
+    fingerprint VARCHAR(255),
+    first_detected DATETIME,
+    last_detected DATETIME,
+    hit_count INT DEFAULT 1,
+    severity ENUM('LOW','MEDIUM','HIGH'),
+    is_active BOOLEAN DEFAULT 1,
+
+    UNIQUE KEY uniq_attack (attack_type, fingerprint)
+)""")
+
 
             print("All tables created successfully.")
 
@@ -252,7 +269,38 @@ CREATE TABLE IF NOT EXISTS settings (
     def process(self):
             global data,request_queue
             global insertion_time
-                
+            global WHITELIST_CACHE,LAST_WHITELIST_FETCH
+           
+            now = time.time()
+            if now - LAST_WHITELIST_FETCH < WHITELIST_REFRESH_INTERVAL:
+            
+                try:
+                    cursor = connection.cursor()
+                    cursor.execute("SELECT whitelisted_ips FROM settings LIMIT 1")
+                    row = cursor.fetchone()
+
+                    if row and row[0]:
+                        WHITELIST_CACHE = {
+                            IPS.normalize_ip(ip)
+                            for ip in row[0].split(",")
+                            if IPS.normalize_ip(ip)
+                        }
+                    else:
+                        WHITELIST_CACHE = set()
+
+                    LAST_WHITELIST_FETCH = now
+                    cursor.close()
+
+                    # optional debug
+                    # print("[INFO] Whitelist refreshed:", WHITELIST_CACHE)
+
+                except Exception as e:
+                    print("[WHITELIST REFRESH ERROR]:", e)
+
+
+
+
+
             #print("Processing")
             if not request_queue.empty():
                 while not request_queue.empty():
@@ -264,6 +312,9 @@ CREATE TABLE IF NOT EXISTS settings (
 
                         # ---- Network identity ----
                         src_ip = str(curr_request.get("Src_IP"))
+                        if src_ip in WHITELIST_CACHE:
+                            continue
+                        #ignoring whitelist ips
                         dst_ip = str(curr_request.get("Dst_IP"))
 
                         src_port = curr_request.get("Src_Port")
@@ -291,10 +342,14 @@ CREATE TABLE IF NOT EXISTS settings (
                         fragment_offset = curr_request.get("Fragment_Offset")
 
                         # ---- ICMP / IPv6 ----
-                        icmp_type = curr_request.get("ICMP_Type")
-                        icmp_code = curr_request.get("ICMP_Code")
-                        ipv6_flow_label = curr_request.get("IPv6_FlowLabel")
-                        ipv6_traffic_class = curr_request.get("IPv6_TrafficClass")
+                        def na_to_null(value):
+                            if value in ("N/A", "", "NA"):
+                                return None
+                            return value
+                        icmp_type = na_to_null(curr_request.get("ICMP_Type"))
+                        icmp_code = na_to_null(curr_request.get("ICMP_Code"))
+                        ipv6_flow_label = na_to_null(curr_request.get("IPv6_FlowLabel"))
+                        ipv6_traffic_class = na_to_null(curr_request.get("IPv6_TrafficClass"))
 
                         insertion_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S.%f")
                         try:
@@ -582,13 +637,43 @@ class IPS:
             return True
         else :
             False
+    
+    def whitelist_ips(self):
+        cursor = None
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT whitelisted_ips FROM settings LIMIT 1")
+            row = cursor.fetchone()
 
-       
+            if not row or not row[0]:
+                return set()
+
+            # Convert CSV → set
+            return {ip.strip() for ip in row[0].split(",") if ip.strip()}
+
+        except Exception as e:
+            print("[WHITELIST ERROR]:", e)
+            return set()
+
+        finally:
+            if cursor:
+                cursor.close()
+        
     def block_list(self):
-        query = """ select ip_address from ip WHERE is_blocked=1 """
-        self.cursor.execute(query,)
-        blk_list=self.cursor.fetchall()
-        return blk_list         
+        cursor = None
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT ip_address FROM ip WHERE is_blocked = 1")
+            return {row[0] for row in cursor.fetchall()}
+
+        except Exception as e:
+            print("[BLACKLIST ERROR]:", e)
+            return set()
+
+        finally:
+            if cursor:
+                cursor.close()
+     
     
     def is_ip_suspicious(self,request_counter, expected_requests, confidence_level=0.99):
 
@@ -662,24 +747,21 @@ class IPS:
             print("[WHITELIST ERROR]:", e)
 
     def blacklist_ip(action, ip=None):
+        cursor = None
         try:
-            blocked_until = datetime.now() + timedelta(days=365 * 100)
-            ips.block_ip(ip,blocked_until)
+            cursor = connection.cursor()
+
             cursor.execute("SELECT blacklisted_ips FROM settings LIMIT 1")
             result = cursor.fetchone()
 
-            raw = result[0] if result else None
+            raw = result[0] if result and result[0] else "[]"
+            if isinstance(raw, bytes):
+                raw = raw.decode()
 
-            if raw is None:
+            try:
+                ip_list = json.loads(raw)
+            except Exception:
                 ip_list = []
-            else:
-                if isinstance(raw, bytes):
-                    raw = raw.decode()
-
-                try:
-                    ip_list = json.loads(raw)
-                except:
-                    ip_list = []
 
             if action == "add" and ip:
                 if ip not in ip_list:
@@ -690,15 +772,31 @@ class IPS:
                     ip_list.remove(ip)
 
             elif action == "all":
-                return ip_list
+                return ip_list  # ✅ ALWAYS list
 
             final_json = json.dumps(ip_list)
-
-            cursor.execute("UPDATE settings SET blacklisted_ips=%s", (final_json,))
+            cursor.execute(
+                "UPDATE settings SET blacklisted_ips=%s",
+                (final_json,)
+            )
             connection.commit()
+
+            return ip_list  # ✅ return updated list
 
         except Exception as e:
             print("[BLACKLIST ERROR]:", e)
+            return []        # ✅ NEVER None
+
+    
+    def normalize_ip(ip_str):
+        try:
+            ip = ipaddress.ip_address(ip_str.strip())
+            return str(ip)   # canonical form
+        except ValueError:
+            return None
+
+
+
 class REQUEST:
     
     def __init__(self,connection,cursor):
@@ -1164,27 +1262,36 @@ class EMERGENCY_ALERT:
 
 
 
+def upsert_attack(cursor, attack_type, src_ip, fingerprint, severity):
+    query = """
+    INSERT INTO attack_state
+        (attack_type, src_ip, fingerprint, first_detected, last_detected, hit_count, severity, is_active)
+    VALUES
+        (%s, %s, %s, NOW(), NOW(), 1, %s, 1)
+    ON DUPLICATE KEY UPDATE
+        last_detected = NOW(),
+        hit_count = hit_count + 1,
+        severity = VALUES(severity),
+        is_active = 1
+    """
+    cursor.execute(query, (attack_type, src_ip, fingerprint, severity))
 
 
-import mysql.connector
+
 from collections import defaultdict
-
-PORT_THRESHOLD = 10
-TIME_WINDOW = 30  # minutes
-MIN_PACKETS = 50
-SYN_RATIO_THRESHOLD = 0.8
-
+from datetime import datetime
+import mysql.connector
 
 def fetch_last_30_min_packets():
     connection = mysql.connector.connect(
         host="localhost",
         user="root",
         password="",
-        database="Securegate",
+        database="securegate",
         port=3306,
     )
     cursor = connection.cursor()
-   
+
     query = """
     SELECT 
         request_time,
@@ -1217,10 +1324,7 @@ def fetch_last_30_min_packets():
 
     print(f"[INFO] Loaded {len(detection_packets)} packets")
 
-    #PORT SCAN LOGIC 
-
-
-
+    # ================= PORT SCAN =================
     ip_ports = defaultdict(set)
 
     for pkt in detection_packets:
@@ -1229,27 +1333,34 @@ def fetch_last_30_min_packets():
 
     for ip, ports in ip_ports.items():
         if len(ports) >= PORT_THRESHOLD:
-            print(f"[PORT SCAN] {ip} → {len(ports)} ports")
+            fingerprint = f"{ip}:PORT_SCAN"
+            severity = "MEDIUM" if len(ports) < 100 else "HIGH"
 
-    # MULTI-IP MASS SCAN 
+            upsert_attack(
+                cursor,
+                attack_type="PORT_SCAN",
+                src_ip=ip,
+                fingerprint=fingerprint,
+                severity=severity
+            )
 
-
+    # ================= MASS SCAN =================
     all_ports = set()
     for ports in ip_ports.values():
         all_ports.update(ports)
 
     if len(all_ports) >= 1000:
-        suspicious_ips = []
-        for ip, ports in ip_ports.items():
-            if ports & all_ports:
-                suspicious_ips.append(ip)
+        for ip in ip_ports.keys():
+            fingerprint = f"{ip}:MASS_SCAN"
+            upsert_attack(
+                cursor,
+                attack_type="MASS_SCAN",
+                src_ip=ip,
+                fingerprint=fingerprint,
+                severity="HIGH"
+            )
 
-        print("[MASS SCAN IPs]", suspicious_ips)
-        print("Total distinct ports:", len(all_ports))
-
-    # SYN FLOOD LOGIC 
-
-    
+    # ================= SYN FLOOD =================
     tcp_stats = defaultdict(lambda: {
         "syn": 0,
         "ack": 0,
@@ -1282,13 +1393,20 @@ def fetch_last_30_min_packets():
         ack_ratio = stats["ack"] / total
 
         if syn_ratio >= SYN_RATIO_THRESHOLD and ack_ratio < 0.2:
-            print(f"[SYN FLOOD] {ip} | SYN={stats['syn']} ACK={stats['ack']}")
+            fingerprint = f"{ip}:SYN_FLOOD"
+            severity = "HIGH"
 
-   
+            upsert_attack(
+                cursor,
+                attack_type="SYN_FLOOD",
+                src_ip=ip,
+                fingerprint=fingerprint,
+                severity=severity
+            )
 
-
-
-
+    connection.commit()
+    cursor.close()
+    connection.close()
 
 
 

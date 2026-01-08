@@ -3,24 +3,22 @@ import subprocess
 import shutil
 import requests
 import importlib.util
+import platform
+
+# --------------------------------------------------
+# 1. Dependency check (Python libs)
+# --------------------------------------------------
 
 libraries = {
-    "os": "os",
-    "json": "json",
-    "time": "time",
-    "datetime": "datetime",
-    "socket": "socket",
-    "smtplib": "smtplib",
-    "tkinter": "tkinter",
     "mysql.connector": "mysql-connector-python",
     "requests": "requests",
-    "scapy.all": "scapy",
+    "scapy": "scapy",
     "portalocker": "portalocker",
     "matplotlib": "matplotlib",
     "bcrypt": "bcrypt",
     "scipy": "scipy",
-    "psutil":"psutil",
-    "PIL":"PIL"
+    "psutil": "psutil",
+    "PIL": "Pillow",
 }
 
 def is_module_installed(module_name):
@@ -29,77 +27,96 @@ def is_module_installed(module_name):
     except Exception:
         return False
 
-print(" Checking/installing required libraries...\n")
+print("\n🔍 Checking required Python libraries...\n")
+
 for module, pip_name in libraries.items():
     if is_module_installed(module):
-        print(f" {pip_name} already installed.")
+        print(f"✔ {pip_name} already installed")
     else:
-        print(f"️ Installing {pip_name}...")
-        try:
-            subprocess.check_call(["python3", "-m", "pip", "install", pip_name])
-        except Exception:
-            try:
-                subprocess.check_call(["python", "-m", "pip", "install", pip_name])
-            except Exception as e:
-                print(f"️ Could not install {pip_name}: {e}")
+        print(f"❌ {pip_name} NOT installed (install manually)")
 
-print("\n Library check complete.\n")
+print("\n📦 Library check complete.\n")
 
+# --------------------------------------------------
+# 2. Download SecureGate files
+# --------------------------------------------------
 
-def download_file(url, save_dir="securegate_files", filename=None):
+def download_file(url, save_dir="securegate_files"):
     os.makedirs(save_dir, exist_ok=True)
+    filename = url.split("/")[-1]
+    path = os.path.join(save_dir, filename)
 
-    if not filename:
-        filename = url.split("/")[-1]
-
-    filepath = os.path.join(save_dir, filename)
-
-    if os.path.exists(filepath):
-        print(f"️ Already exists: {filepath} — skipping download")
+    if os.path.exists(path):
+        print(f"✔ {filename} already exists")
         return
 
-    if "github.com" in url and "blob" in url:
-        url = url.replace("github.com", "raw.githubusercontent.com").replace("/blob", "")
-
-    response = requests.get(url, stream=True)
-    if response.status_code == 200:
-        with open(filepath, "wb") as f:
-            for chunk in response.iter_content(1024):
+    r = requests.get(url, stream=True)
+    if r.status_code == 200:
+        with open(path, "wb") as f:
+            for chunk in r.iter_content(1024):
                 f.write(chunk)
-        print(f"Downloaded: {filepath}")
+        print(f"⬇ Downloaded {filename}")
     else:
-        print(f"Failed to download {url}. Status code: {response.status_code}")
+        print(f"❌ Failed to download {filename}")
 
 urls = [
     "https://raw.githubusercontent.com/karan-mondkar/securegate/main/gui.py",
     "https://raw.githubusercontent.com/karan-mondkar/securegate/main/network_monitor.py",
     "https://raw.githubusercontent.com/karan-mondkar/securegate/main/securegate_new.py",
-    "https://raw.githubusercontent.com/karan-mondkar/securegate/main/securegate_image.ico"
+    "https://raw.githubusercontent.com/karan-mondkar/securegate/main/securegate_image.ico",
 ]
 
+print("\n⬇ Downloading SecureGate files...\n")
 for url in urls:
     download_file(url)
 
+# --------------------------------------------------
+# 3. Ensure terminal exists on Linux (xterm)
+# --------------------------------------------------
+
+system = platform.system()
+
+if system == "Linux":
+    if not shutil.which("xterm"):
+        print("\n🖥 xterm not found. Installing xterm...\n")
+        subprocess.check_call(["apt", "update"])
+        subprocess.check_call(["apt", "install", "-y", "xterm"])
+    else:
+        print("✔ xterm already installed")
+
+# --------------------------------------------------
+# 4. Launch SecureGate scripts
+# --------------------------------------------------
+
 python_cmd = shutil.which("python3") or shutil.which("python")
 if not python_cmd:
-    raise RuntimeError(" No Python interpreter found!")
+    raise RuntimeError("No Python interpreter found!")
 
 project_files = [
-    
     "securegate_files/network_monitor.py",
     "securegate_files/securegate_new.py",
-    "securegate_files/gui.py"
+    "securegate_files/gui.py",
 ]
 
-processes = []
+print("\n🚀 Starting SecureGate scripts...\n")
 
-print("\n Starting SecureGate scripts in parallel...\n")
 for script in project_files:
-    if os.path.exists(script):
-        print(f" Launching: {script}")
-        p = subprocess.Popen([python_cmd, script])
-        processes.append(p)
-    else:
-        print(f" File not found: {script}")
+    if not os.path.exists(script):
+        print(f"❌ File not found: {script}")
+        continue
 
-print("\n✅ All SecureGate scripts have finished .")
+    print(f"▶ Launching: {script}")
+
+    if system == "Windows":
+        subprocess.Popen(["cmd", "/k", python_cmd, script])
+
+    elif system == "Linux":
+       subprocess.Popen([
+    "xterm",
+    "-hold",
+    "-e",
+    f"{python_cmd} {script}"
+])
+
+
+print("\n✅ SecureGate launched successfully.\n")

@@ -461,7 +461,7 @@ def settingshow(setnum):
         confirm_pass = ttk.Entry(settings_group, show="*")
         confirm_pass.grid(row=3, column=1, padx=5, pady=10, sticky="ew")
 
-        confirm_button = ttk.Button(form_container, text="Confirm Settings", command=lambda: update_setting("sign in"))
+        confirm_button = ttk.Button(form_container, text="Confirm settings", command=lambda: update_setting("sign in"))
         confirm_button.grid(row=1, column=0, pady=20)
         try:
             original_image = Image.open("securegate_.png")
@@ -631,6 +631,7 @@ def settingshow(setnum):
 
 
 
+
 def update_setting(val):
     global admin_user, email,form_container, admin_pass,phone, time_limit, honeypot_ips, folder_path, allowed_ports, port_services,whitelist,blacklist
     global interval_var, request_limit_var,port,service,email_notify_var
@@ -644,7 +645,7 @@ def update_setting(val):
                 admin=admin_user.get()                
                 em=email.get()
                 pass_hs=hash_password(admin_pass.get())
-                query = """ INSERT INTO Settings (admin_name,email,password_hash) VALUES (%s,%s,%s)"""
+                query = """ INSERT INTO settings (admin_name,email,password_hash) VALUES (%s,%s,%s)"""
                 cursor.execute(query, (admin,em,pass_hs))
                 connection.commit()
                 
@@ -658,7 +659,7 @@ def update_setting(val):
                 validate_user=True    
     if val=="phone":
             print("yess")
-            query = """ UPDATE Settings SET phone = %s  """
+            query = """ UPDATE settings SET phone = %s  """
             cursor.execute(query, (phone.get(),))
             connection.commit()
             #adding here the button successful or error message
@@ -666,7 +667,7 @@ def update_setting(val):
             jsonins("port",port.get(),service.get())
 
     if val=="request_time_limit":
-            query = """ UPDATE Settings SET request_time_limit = %s  """
+            query = """ UPDATE settings SET request_time_limit = %s  """
             cursor.execute(query, (time_limit.get(),))
             connection.commit()
     if val=="max_requests_per_ip":
@@ -679,7 +680,7 @@ def update_setting(val):
             ins_honey(honeypot_ips.get())
     
     if val=="sensitive folder":
-            query = """ UPDATE Settings SET sensitive_folders= %s """
+            query = """ UPDATE settings SET sensitive_folders= %s """
             cursor.execute(query, (folder_path.get(),))
             connection.commit()
     if val=="allowed_port":
@@ -699,23 +700,23 @@ def update_setting(val):
 
     if val=="new email":
         
-        query = """ UPDATE Settings SET email = %s """
+        query = """ UPDATE settings SET email = %s """
         cursor.execute(query, (new_email.get(),))
         connection.commit()
 
     if val=="sensative_folder":
         
-        query = """ UPDATE Settings SET sensitive_folders = %s """
+        query = """ UPDATE settings SET sensitive_folders = %s """
         cursor.execute(query, (sensative_folder.get(),))
         connection.commit()
 
     if val=="email_notifications":
-        query = """ UPDATE Settings SET email_alerts_enabled = %s """
+        query = """ UPDATE settings SET email_alerts_enabled = %s """
         cursor.execute(query, (email_notify_var.get(),))
         connection.commit()
 
     if val=="max_requests_per_ip":
-        query = """ UPDATE Settings SET request_time_limit = %s """
+        query = """ UPDATE settings SET request_time_limit = %s """
         cursor.execute(query, (max_requests_per_ip.get(),))
         connection.commit()
     if val in ["whitelist", "blacklist"]:
@@ -727,11 +728,20 @@ def update_setting(val):
         if not ip_value:
             messagebox.showwarning("Input Error", "Please enter an IP address.")
             return
+        normalized_ip = IPS.normalize_ip(ip_value)
+
+        if not normalized_ip:
+            messagebox.showerror(
+                "Invalid IP",
+                "Please enter a valid IPv4 or IPv6 address."
+            )
+            return
 
       
         all_whitelist = IPS_ob.whitelist_ip("all")
         all_blacklist = IPS_ob.blacklist_ip("all")
-
+        print(all_whitelist,"<-whitlist")
+        print(all_blacklist,"<-blacklist")
      
 
         if ip_value in all_whitelist:
