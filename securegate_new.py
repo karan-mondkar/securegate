@@ -296,27 +296,29 @@ CREATE TABLE IF NOT EXISTS settings (
             
 
             cursor.execute("""
-CREATE TABLE IF NOT EXISTS attack_state (
+  CREATE TABLE IF NOT EXISTS attack_state (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
 
-    attack_type VARCHAR(30),
-    src_ip VARCHAR(45),
-    fingerprint VARCHAR(255),
+    attack_type VARCHAR(30) NOT NULL,
+    src_ip VARCHAR(45) NOT NULL,
+    fingerprint VARCHAR(255) NOT NULL,
 
-    first_detected DATETIME,
-    last_detected DATETIME,
+    first_detected DATETIME NOT NULL,
+    last_detected DATETIME NOT NULL,
 
     hit_count INT DEFAULT 1,
-    severity ENUM('LOW','MEDIUM','HIGH'),
+    severity ENUM('LOW','MEDIUM','HIGH') DEFAULT 'LOW',
 
-    actions_taken JSON NOT NULL,
-    action_expires_at DATETIME,
+    actions_taken JSON NULL,
+    action_expires_at DATETIME NULL,
 
     is_active BOOLEAN DEFAULT 1,
 
-    UNIQUE KEY uniq_attack (attack_type, fingerprint)
+    UNIQUE KEY uniq_attack (attack_type, fingerprint),
+    INDEX idx_src_ip (src_ip),
+    INDEX idx_active (is_active),
+    INDEX idx_expiry (action_expires_at)
 )
-
 """)
 
           
@@ -541,7 +543,7 @@ CREATE TABLE IF NOT EXISTS attack_state (
             
             except Exception as e:
                 print("[Background thread error]:", e)
-    
+    @staticmethod
     def upsert_attack(cursor, attack_type, src_ip, fingerprint, severity):
         
         cursor.execute("""
@@ -779,7 +781,7 @@ CREATE TABLE IF NOT EXISTS attack_state (
                 fingerprint = f"{ip}:PORT_SCAN"
                 severity = "MEDIUM" if len(ports) < high_sev_port else "HIGH"
 
-                upsert_attack(
+                SYS_INFO.upsert_attack(
                     cursor,
                     attack_type="PORT_SCAN",
                     src_ip=ip,
@@ -795,7 +797,7 @@ CREATE TABLE IF NOT EXISTS attack_state (
         if len(all_ports) >= mass_scan_ports:
             for ip in ip_ports.keys():
                 fingerprint = f"{ip}:MASS_SCAN"
-                upsert_attack(
+                SYS_INFO.upsert_attack(
                     cursor,
                     attack_type="MASS_SCAN",
                     src_ip=ip,
@@ -839,7 +841,7 @@ CREATE TABLE IF NOT EXISTS attack_state (
                 fingerprint = f"{ip}:SYN_FLOOD"
                 severity = "HIGH"
 
-                upsert_attack(
+                SYS_INFO.upsert_attack(
                     cursor,
                     attack_type="SYN_FLOOD",
                     src_ip=ip,
