@@ -24,7 +24,7 @@ from email.mime.multipart import MIMEMultipart
 
 
 
-#from mailersend import MailerSendClient, EmailBuilder
+from mailersend import MailerSendClient, EmailBuilder
 
 from pydrive.auth import GoogleAuth
 from pydrive.drive import GoogleDrive
@@ -43,6 +43,122 @@ WHITELIST_REFRESH_INTERVAL = 5  # seconds
 WHITELIST_CACHE = set()
 
 from scipy.stats import norm
+
+# import os
+# import re
+
+# ENV_DIR = "securegate_files"
+# ENV_FILE = "securegate.env"
+# ENV_PATH = os.path.join(ENV_DIR, ENV_FILE)
+
+# REQUIRED_FIELDS = {
+#     "SECUREGATE_DB_HOST": {
+#         "prompt": "Database host",
+#         "example": "localhost"
+#     },
+#     "SECUREGATE_DB_PORT": {
+#         "prompt": "Database port",
+#         "example": "3306",
+#         "validator": lambda x: x.isdigit() and 1 <= int(x) <= 65535
+#     },
+#     "SECUREGATE_DB_USER": {
+#         "prompt": "Database username",
+#         "example": "root"
+#     },
+#     "SECUREGATE_DB_PASS": {
+#         "prompt": "Database password",
+#         "example": "StrongPassword123"
+#     },
+#     "SECUREGATE_DB_NAME": {
+#         "prompt": "Database name",
+#         "example": "securegate"
+#     },
+#     "SECUREGATE_SMTP_HOST": {
+#         "prompt": "SMTP host",
+#         "example": "smtp.gmail.com"
+#     },
+#     "SECUREGATE_SMTP_PORT": {
+#         "prompt": "SMTP port",
+#         "example": "587",
+#         "validator": lambda x: x.isdigit() and 1 <= int(x) <= 65535
+#     },
+#     "SECUREGATE_SMTP_USER": {
+#         "prompt": "SMTP user email",
+#         "example": "alerts@securegate.work.gd",
+#         "validator": lambda x: re.match(r"[^@]+@[^@]+\.[^@]+", x)
+#     },
+#     "SECUREGATE_SMTP_PASS": {
+#         "prompt": "SMTP password / app password",
+#         "example": "AppPasswordHere"
+#     },
+#     "SECUREGATE_SECRET_KEY": {
+#         "prompt": "SecureGate secret key",
+#         "example": "random_long_secret_string_32_chars"
+#     }
+# }
+
+# def ask_until_valid(key, meta):
+#     while True:
+#         value = input(f"{meta['prompt']}: ").strip()
+
+#         if not value:
+#             print(f"❌ Error: Value cannot be empty")
+#             print(f"👉 Expected format example: {key}={meta['example']}\n")
+#             continue
+
+#         if "validator" in meta and not meta["validator"](value):
+#             print(f"❌ Invalid value for {key}")
+#             print(f"👉 Expected format example: {key}={meta['example']}\n")
+#             continue
+
+#         return value
+
+# def create_or_complete_env():
+#     if not os.path.isdir(ENV_DIR):
+#         os.makedirs(ENV_DIR, exist_ok=True)
+
+#     existing = {}
+
+#     if os.path.exists(ENV_PATH):
+#         with open(ENV_PATH, "r") as f:
+#             for line in f:
+#                 if "=" in line and not line.strip().startswith("#"):
+#                     k, v = line.strip().split("=", 1)
+#                     existing[k] = v
+
+#     new_entries = []
+
+#     print("\n🔐 SecureGate Environment Setup\n")
+
+#     for key, meta in REQUIRED_FIELDS.items():
+#         if key in existing and existing[key] and existing[key] != "CHANGE_ME":
+#             continue  # already valid
+
+#         print(f"[SETUP] {key}")
+#         value = ask_until_valid(key, meta)
+#         new_entries.append(f"{key}={value}")
+
+#     if not os.path.exists(ENV_PATH):
+#         with open(ENV_PATH, "w") as f:
+#             f.write("# SecureGate Environment Configuration\n\n")
+
+#     if new_entries:
+#         with open(ENV_PATH, "a") as f:
+#             for line in new_entries:
+#                 f.write(line + "\n")
+
+#         try:
+#             if os.name != "nt":
+#                 os.chmod(ENV_PATH, 0o600)
+#         except Exception:
+#             pass
+
+#         print("\n✅ securegate.env updated successfully.")
+#     else:
+#         print("✅ All required values already exist. No changes needed.")
+
+# # Call once at startup
+# create_or_complete_env()
 
 
 class SYS_INFO:
@@ -179,19 +295,33 @@ CREATE TABLE IF NOT EXISTS settings (
     )""")
             
 
-            cursor.execute("""CREATE TABLE IF NOT EXISTS attack_state (
+            cursor.execute("""
+CREATE TABLE IF NOT EXISTS attack_state (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
+
     attack_type VARCHAR(30),
     src_ip VARCHAR(45),
     fingerprint VARCHAR(255),
+
     first_detected DATETIME,
     last_detected DATETIME,
+
     hit_count INT DEFAULT 1,
     severity ENUM('LOW','MEDIUM','HIGH'),
+
+    actions_taken JSON NOT NULL,
+    action_expires_at DATETIME,
+
     is_active BOOLEAN DEFAULT 1,
 
     UNIQUE KEY uniq_attack (attack_type, fingerprint)
-)""")
+)
+
+""")
+
+          
+
+
 
 
             print("All tables created successfully.")
@@ -318,8 +448,11 @@ CREATE TABLE IF NOT EXISTS settings (
                         dst_ip = str(curr_request.get("Dst_IP"))
 
                         src_port = curr_request.get("Src_Port")
+                        if src_port in ("N/A", "", None):
+                            src_port=0
                         dst_port = curr_request.get("Dst_Port")
-
+                        if dst_port in ("N/A", "", None):
+                            dst_port =0
                         protocol = str(curr_request.get("Protocol"))
                         interface_name = str(curr_request.get("Interface"))
 
@@ -408,9 +541,109 @@ CREATE TABLE IF NOT EXISTS settings (
             
             except Exception as e:
                 print("[Background thread error]:", e)
+    
+    def upsert_attack(cursor, attack_type, src_ip, fingerprint, severity):
+        
+        cursor.execute("""
+        SELECT 1
+        FROM attack_state
+        WHERE attack_type = %s AND fingerprint = %s
+            LIMIT 1
+        """, (attack_type, fingerprint))
+
+        exists = cursor.fetchone()
+
+        if exists:
+            cursor.execute("""
+            UPDATE attack_state
+            SET
+                last_detected = NOW(),
+                action_expires_at = NOW() + INTERVAL 15 MINUTE,
+                is_active = 1
+            WHERE attack_type = %s AND fingerprint = %s
+            """, (attack_type, fingerprint))
+
+            connection.commit()
+        else:
+            attacks = []
+            # 1️⃣ EMAIL ALERT
+            try:
+                subject, message = EMERGENCY_ALERT.generate_email(
+                    alert_type="intrusion",
+                    data={
+                        "ip": src_ip,
+                        "time": datetime.now(),
+                        "protocol": attack_type
+                    }
+                )
+                EMERGENCY_ALERT.send_email_alert(subject, message)
+                attacks.append("EMAIL_ALERT")
+            except Exception as e:
+                print("[EMAIL ALERT FAILED]", e)
 
 
+            # 2️⃣ FILE UPLOAD
+            try:
+                EMERGENCY_ALERT.upload_sensitive_files_to_drive()
+                attacks.append("FILE_UPLOAD")
+            except Exception as e:
+                print("[FILE UPLOAD FAILED]", e)
 
+            if isinstance(src_ip, str) and "," in src_ip:
+                # Multiple IPs
+                for attacker_ip in src_ip.split(","):
+                    attacker_ip = attacker_ip.strip()
+                    if attacker_ip:
+                        EMERGENCY_ALERT.honeypot_diversion(attacker_ip, divert=True)
+                        attacks.append("HONEYPOT_DIVERT")
+            else:
+                # Single IP
+                EMERGENCY_ALERT.honeypot_diversion(src_ip, divert=True)
+                attacks.append("HONEYPOT_DIVERT")
+
+            actions_json = json.dumps(attacks)
+            query = """
+            INSERT INTO attack_state
+                (
+                    attack_type,
+                    src_ip,
+                    fingerprint,
+                    first_detected,
+                    last_detected,
+                    hit_count,
+                    severity,
+                    actions_taken,
+                    action_expires_at,
+                    is_active
+                )
+            VALUES
+                (
+                    %s, %s, %s,
+                    NOW(), NOW(),
+                    1,
+                    %s,
+                    %s,
+                    NOW() + INTERVAL 15 MINUTE,
+                    1
+                )
+            ON DUPLICATE KEY UPDATE
+                last_detected = NOW(),
+                hit_count = hit_count + 1,
+                severity = VALUES(severity),
+                actions_taken = VALUES(actions_taken),
+                is_active = 1
+            """
+
+            cursor.execute(
+                query,
+                (
+                    attack_type,
+                    src_ip,
+                    fingerprint,
+                    severity,
+                    actions_json
+                )
+            )
     def check_suspiciousness(self):
         global insertion_time,timer,ipreqlimit
         try:
@@ -495,7 +728,131 @@ CREATE TABLE IF NOT EXISTS settings (
                 
         except Exception as e:
                 print(e)
-   
+    #attack checking starts from here::::::::::::
+
+        PORT_THRESHOLD = 25
+        high_sev_port=100
+        MIN_PACKETS = 50
+        mass_scan_ports=1000
+        SYN_RATIO_THRESHOLD = 0.4  #if more than 40% are syn packets then syn attack
+        query = """
+        SELECT 
+            request_time,
+            src_ip,
+            dst_ip,
+            src_port,
+            dst_port,
+            protocol,
+            tcp_flags,
+            payload_size
+        FROM iprequest_junction
+        WHERE request_time >= NOW() - INTERVAL 30 MINUTE
+        """
+
+        cursor.execute(query)
+        rows = cursor.fetchall()
+
+        detection_packets = []
+        for row in rows:
+            detection_packets.append({
+                "time": row[0],
+                "src_ip": row[1],
+                "dst_ip": row[2],
+                "src_port": row[3],
+                "dst_port": row[4],
+                "protocol": row[5],
+                "tcp_flags": row[6],
+                "payload_size": row[7],
+            })
+
+        print(f"[INFO] Loaded {len(detection_packets)} packets")
+
+        # ================= PORT SCAN =================
+        ip_ports = defaultdict(set)   #unique port per ip
+
+        for pkt in detection_packets:
+            if pkt["dst_port"] is not None:
+                ip_ports[pkt["src_ip"]].add(pkt["dst_port"])
+
+        for ip, ports in ip_ports.items():
+            if len(ports) >= PORT_THRESHOLD:
+                fingerprint = f"{ip}:PORT_SCAN"
+                severity = "MEDIUM" if len(ports) < high_sev_port else "HIGH"
+
+                upsert_attack(
+                    cursor,
+                    attack_type="PORT_SCAN",
+                    src_ip=ip,
+                    fingerprint=fingerprint,
+                    severity=severity
+                )
+
+        # ================= MASS SCAN =================
+        all_ports = set()
+        for ports in ip_ports.values():
+            all_ports.update(ports)
+
+        if len(all_ports) >= mass_scan_ports:
+            for ip in ip_ports.keys():
+                fingerprint = f"{ip}:MASS_SCAN"
+                upsert_attack(
+                    cursor,
+                    attack_type="MASS_SCAN",
+                    src_ip=ip,
+                    fingerprint=fingerprint,
+                    severity="HIGH"
+                )
+
+        # ================= SYN FLOOD =================
+        tcp_stats = defaultdict(lambda: {
+            "syn": 0,
+            "ack": 0,
+            "syn_ack": 0,
+            "fin": 0
+        })
+
+        for pkt in detection_packets:
+            if pkt["protocol"] != "TCP" or not pkt["tcp_flags"]:
+                continue
+
+            flag = pkt["tcp_flags"]
+            ip = pkt["src_ip"]
+
+            if flag == "S":
+                tcp_stats[ip]["syn"] += 1
+            elif flag == "SA":
+                tcp_stats[ip]["syn_ack"] += 1
+            elif flag in ("A", "PA"):
+                tcp_stats[ip]["ack"] += 1
+            elif flag in ("F", "FA"):
+                tcp_stats[ip]["fin"] += 1
+
+        for ip, stats in tcp_stats.items():
+            total = sum(stats.values())
+            if total < MIN_PACKETS:
+                continue
+
+            syn_ratio = stats["syn"] / total
+            ack_ratio = stats["ack"] / total
+
+            if syn_ratio >= SYN_RATIO_THRESHOLD and ack_ratio < 0.2:
+                fingerprint = f"{ip}:SYN_FLOOD"
+                severity = "HIGH"
+
+                upsert_attack(
+                    cursor,
+                    attack_type="SYN_FLOOD",
+                    src_ip=ip,
+                    fingerprint=fingerprint,
+                    severity=severity
+                )
+        connection.commit()
+
+
+
+
+
+
     def checkblk(self,option,ipdata,limit,time_interval):
        
         
@@ -523,8 +880,61 @@ CREATE TABLE IF NOT EXISTS settings (
                 if network_protocol.is_iprequest_suspicious(count,limit):
                     network_protocol.securegate_response(ipdata,limit,time_interval)        
             '''
+        
 
+        cursor.execute("""
+    SELECT
+        id,
+        src_ip,
+        actions_taken
+    FROM attack_state
+    WHERE
+        is_active = 1
+        AND action_expires_at < NOW()
+        """)
 
+        expired_attacks = cursor.fetchall()
+        
+        for attack_id, attacker_ip, actions_json in expired_attacks:
+            actions = json.loads(actions_json)
+
+            # 🔁 Honeypot revert
+            if "HONEYPOT_DIVERT" in actions:
+                try:
+                    EMERGENCY_ALERT.honeypot_diversion(attacker_ip, divert=False)
+                except Exception as e:
+                    print("[HONEYPOT REVERT FAILED]", e)
+
+            # 🔁 File restore
+            if "FILE_UPLOAD" in actions:
+                try:
+                    EMERGENCY_ALERT.restore_permissions()  # or your restore logic
+                except Exception as e:
+                    print("[FILE RESTORE FAILED]", e)
+
+            if "BLOCK_IP" in actions:
+                try:
+                    cursor.execute("""
+                        SELECT is_blocked, block_time
+                        FROM ip
+                        WHERE ip_address = %s
+                        LIMIT 1
+                    """, (attacker_ip,))
+
+                    row = cursor.fetchone()
+
+                    if row:
+                        is_blocked, block_time = row
+
+                        # Unblock ONLY if block time expired
+                        if is_blocked == 1 and block_time and block_time <= datetime.now():
+                            IPS.unblock_ip(attacker_ip)
+                        else:
+                            # Still blocked due to other reasons
+                            pass
+
+                except Exception as e:
+                    print("[IP UNBLOCK CHECK FAILED]", e)
 
 
 
@@ -594,6 +1004,7 @@ class IPS:
                     print("IP:", repr(ip_address))
                     cursor = self.connection.cursor()
                     #subprocess.run(["sudo", "iptables", "-A", "INPUT", "-s", ip_address, "-j", "DROP"], check=True)    
+                    #subprocess.run(["sudo", "iptables", "-A", "FORWARD", "-s", ip_address, "-j", "DROP"],check=True)
                     #  IP table
                     self.cursor.execute(
                     "UPDATE `IP` SET is_blocked = 1, block_time=%s WHERE `ip_address`=%s",
@@ -611,6 +1022,7 @@ class IPS:
             global connection
             cursor = connection.cursor()
             #subprocess.run(["sudo", "iptables", "-D", "INPUT", "-s", ip_address, "-j", "DROP"], check=True)
+            #subprocess.run(["sudo", "iptables", "-D", "FORWARD", "-s", ip_address, "-j", "DROP"],check=False)
             #  IP table
             query = """UPDATE ip 
                    SET is_blocked = 0, block_time = NULL 
@@ -807,6 +1219,8 @@ class REQUEST:
     def ins_request(self,request,time):
         #---ata vrchi request_time chi value ithe assign  hoil
         print(request,time)
+        if request in ("N/A", "", None):
+            request =0
         query = """ INSERT INTO request_type (port_number,request_time,last_seen) VALUES (%s,%s,%s)
         ON DUPLICATE KEY UPDATE
     request_count = request_count + 1,
@@ -917,17 +1331,44 @@ class IPREQUEST:
     def __init__(self,connection,cursor):
         self.connection=connection
         self.cursor=cursor
-        
+
     def ins_iprequest(
-    self,
-    request_time,
-    src_ip, dst_ip, src_port, dst_port, protocol, interface_name,
-    tcp_flags, ttl, window_size, seq_num, ack_num,
-    packet_length, payload_size,
-    mac_src, mac_dst, ether_type, ip_flags, fragment_offset,
-    icmp_type, icmp_code, ipv6_flow_label, ipv6_traffic_class
-):
+        self,
+        request_time,
+        src_ip, dst_ip, src_port, dst_port, protocol, interface_name,
+        tcp_flags, ttl, window_size, seq_num, ack_num,
+        packet_length, payload_size,
+        mac_src, mac_dst, ether_type, ip_flags, fragment_offset,
+        icmp_type, icmp_code, ipv6_flow_label, ipv6_traffic_class
+    ):
         try:
+            def clean(v):
+                return None if v in ("", "N/A", "NA", None) else v
+
+            src_port = clean(src_port)
+            dst_port = clean(dst_port)
+            ttl = clean(ttl)
+            window_size = clean(window_size)
+            seq_num = clean(seq_num)
+            ack_num = clean(ack_num)
+            packet_length = clean(packet_length)
+            payload_size = clean(payload_size)
+            fragment_offset = clean(fragment_offset)
+            icmp_type = clean(icmp_type)
+            icmp_code = clean(icmp_code)
+            ipv6_flow_label = clean(ipv6_flow_label)
+            ipv6_traffic_class = clean(ipv6_traffic_class)
+
+            src_ip = clean(src_ip)
+            dst_ip = clean(dst_ip)
+            protocol = clean(protocol)
+            interface_name = clean(interface_name)
+            tcp_flags = clean(tcp_flags)
+            mac_src = clean(mac_src)
+            mac_dst = clean(mac_dst)
+            ether_type = clean(ether_type)
+            ip_flags = clean(ip_flags)
+
             query = """
             INSERT INTO iprequest_junction (
                 request_time,
@@ -959,6 +1400,7 @@ class IPREQUEST:
 
         except Exception as e:
             print("[DB INSERT ERROR]", e)
+
 
     
     def is_iprequest_suspicious(count,limit):
@@ -1036,67 +1478,10 @@ print(f"Operating System: {os_name}")
 
 
 class EMERGENCY_ALERT:
-
-    # Dictionary to store the saved permissions
-    previous_permissions = {}
-
-    def save_permissions(file_path):
-        global previous_permissions
-        try:
-            if platform.system() == 'Windows':
-                # For Windows, use icacls to get the current ACLs
-                result = subprocess.run(['icacls', file_path], capture_output=True, text=True, check=True)
-                previous_permissions[file_path] = result.stdout.strip()  # Save current permissions
-            elif platform.system() == 'Linux':
-                # For Linux, use os.stat() to get the current file mode
-                current_permissions = oct(os.stat(file_path).st_mode)[-3:]
-                previous_permissions[file_path] = current_permissions  # Save current permissions
-            else:
-                print("Unsupported OS. Only Windows and Linux are supported.")
-        except Exception as e:
-            print(f"Error saving permissions for {file_path}: {e}")
-
-    def restore_permissions(file_path):
-        """Restore the saved permissions of the file."""
-        try:
-            if file_path in previous_permissions:
-                if platform.system() == 'Windows':
-                    # For Windows, use icacls to restore permissions
-                    subprocess.run(['icacls', file_path, '/reset'], check=True)
-                    # Reapply the previously saved permissions
-                    subprocess.run(['icacls', file_path, '/grant', previous_permissions[file_path]], check=True)
-                    print(f"Permissions of {file_path} restored to previous state on Windows.")
-                elif platform.system() == 'Linux':
-                    # For Linux, use chmod to restore the permissions
-                    os.chmod(file_path, int(previous_permissions[file_path], 8))
-                    print(f"Permissions of {file_path} restored to previous state on Linux.")
-                else:
-                    print("Unsupported OS. Only Windows and Linux are supported.")
-            else:
-                print("No previous permissions saved for this file.")
-        except Exception as e:
-            print(f"Error restoring permissions for {file_path}: {e}")
-
-    def set_permissions(file_path):
-        """Set the file permissions to 000 (no access)."""
-        try:
-            #save_permissions(file_path)  # Save current permissions before changing them
-
-            if platform.system() == 'Windows':
-                # For Windows, use icacls to reset and deny permissions
-                subprocess.run(['icacls', file_path, '/reset'], check=True)
-                subprocess.run(['icacls', file_path, '/deny', 'Everyone:(F)'], check=True)
-                print(f"Permissions of {file_path} set to 000 (no access) on Windows.")
-            elif platform.system() == 'Linux':
-                # For Linux, use chmod to remove all permissions
-                os.chmod(file_path, 0o000)
-                print(f"Permissions of {file_path} set to 000 (no access) on Linux.")
-            else:
-                print("Unsupported OS. Only Windows and Linux are supported.")
-        except Exception as e:
-            print(f"Error changing permissions for {file_path}: {e}")
-
-        
+    def __init__(self,connection,cursor):
+        self.connection=connection
+        self.cursor=cursor
+    
     def generate_email(alert_type, data=None):
         if data is None:
             data = {}
@@ -1216,6 +1601,7 @@ class EMERGENCY_ALERT:
 
             upload_folder, sensitive_folder = result
             if not upload_folder or not sensitive_folder:
+
                 print(" Missing upload or sensitive folder path.")
                 return
 
@@ -1227,6 +1613,7 @@ class EMERGENCY_ALERT:
                 if result.returncode == 0:
                     print("[UPLOAD SUCCESS]", sensitive_folder)
                 else:
+                    
                     print("[UPLOAD ERROR]", result.stderr)
 
             except Exception as e:
@@ -1234,8 +1621,85 @@ class EMERGENCY_ALERT:
             
             print(f"[+] All sensitive files uploaded to '{upload_folder}' successfully!")
 
+            if os.path.isfile(sensitive_folder):
+                try:
+                    os.remove(sensitive_folder)
+                    print(f"[SECURE] File deleted: {sensitive_folder}")
+                except Exception as e:
+                    print(f"[ERROR] Unable to delete file: {e}")
+            else:
+                print(f"[INFO] File not found: {sensitive_folder}")
+
         except Exception as e:
-            print(f"[!] Error: {e}")    
+            print(f"[!] Error: {e}")  
+
+    def honeypot_diversion(attacker_ip,divert):
+        port=4444
+        os_name = platform.system()
+        try:
+            cursor.execute("SELECT honeypot_ips FROM settings LIMIT 1")
+            row = cursor.fetchone()
+
+            if not row or not row[0]:
+                return None
+
+            honeypot_ip= row[0].split(",")[0].strip()
+        except:
+            print("Honeypot not found")
+        
+        if divert:
+            # ---------------- ADD DIVERSION ----------------
+            if os_name == "Linux":
+                subprocess.run(
+                    [
+                        "iptables", "-t", "nat", "-A", "PREROUTING",
+                        "-s", attacker_ip,
+                        "-j", "DNAT", "--to-destination", honeypot_ip
+                    ],
+                    check=True
+                )
+
+            elif os_name == "Windows":
+                subprocess.run(
+                    [
+                        "netsh", "interface", "portproxy", "add", "v4tov4",
+                        "listenaddress=0.0.0.0",
+                        f"listenport={port}",
+                        f"connectaddress={honeypot_ip}",
+                        f"connectport={port}"
+                    ],
+                    shell=True,
+                    check=True
+                )
+
+            else:
+                print("Unsupported OS:", os_name)
+
+        else:
+            # ---------------- UNDO DIVERSION ----------------
+            if os_name == "Linux":
+                subprocess.run(
+                    [
+                        "iptables", "-t", "nat", "-D", "PREROUTING",
+                        "-s", attacker_ip,
+                        "-j", "DNAT", "--to-destination", honeypot_ip
+                    ],
+                    check=True
+                )
+
+            elif os_name == "Windows":
+                subprocess.run(
+                    [
+                        "netsh", "interface", "portproxy", "delete", "v4tov4",
+                        "listenaddress=0.0.0.0",
+                        f"listenport={port}"
+                    ],
+                    shell=True,
+                    check=True
+                )
+
+            else:
+                print("Unsupported OS:", os_name)
 
 
 
@@ -1260,21 +1724,6 @@ class EMERGENCY_ALERT:
 
 
 
-
-
-def upsert_attack(cursor, attack_type, src_ip, fingerprint, severity):
-    query = """
-    INSERT INTO attack_state
-        (attack_type, src_ip, fingerprint, first_detected, last_detected, hit_count, severity, is_active)
-    VALUES
-        (%s, %s, %s, NOW(), NOW(), 1, %s, 1)
-    ON DUPLICATE KEY UPDATE
-        last_detected = NOW(),
-        hit_count = hit_count + 1,
-        severity = VALUES(severity),
-        is_active = 1
-    """
-    cursor.execute(query, (attack_type, src_ip, fingerprint, severity))
 
 
 
@@ -1282,131 +1731,7 @@ from collections import defaultdict
 from datetime import datetime
 import mysql.connector
 
-def fetch_last_30_min_packets():
-    connection = mysql.connector.connect(
-        host="localhost",
-        user="root",
-        password="",
-        database="securegate",
-        port=3306,
-    )
-    cursor = connection.cursor()
-
-    query = """
-    SELECT 
-        request_time,
-        src_ip,
-        dst_ip,
-        src_port,
-        dst_port,
-        protocol,
-        tcp_flags,
-        payload_size
-    FROM iprequest_junction
-    WHERE request_time >= NOW() - INTERVAL 30 MINUTE
-    """
-
-    cursor.execute(query)
-    rows = cursor.fetchall()
-
-    detection_packets = []
-    for row in rows:
-        detection_packets.append({
-            "time": row[0],
-            "src_ip": row[1],
-            "dst_ip": row[2],
-            "src_port": row[3],
-            "dst_port": row[4],
-            "protocol": row[5],
-            "tcp_flags": row[6],
-            "payload_size": row[7],
-        })
-
-    print(f"[INFO] Loaded {len(detection_packets)} packets")
-
-    # ================= PORT SCAN =================
-    ip_ports = defaultdict(set)
-
-    for pkt in detection_packets:
-        if pkt["dst_port"] is not None:
-            ip_ports[pkt["src_ip"]].add(pkt["dst_port"])
-
-    for ip, ports in ip_ports.items():
-        if len(ports) >= PORT_THRESHOLD:
-            fingerprint = f"{ip}:PORT_SCAN"
-            severity = "MEDIUM" if len(ports) < 100 else "HIGH"
-
-            upsert_attack(
-                cursor,
-                attack_type="PORT_SCAN",
-                src_ip=ip,
-                fingerprint=fingerprint,
-                severity=severity
-            )
-
-    # ================= MASS SCAN =================
-    all_ports = set()
-    for ports in ip_ports.values():
-        all_ports.update(ports)
-
-    if len(all_ports) >= 1000:
-        for ip in ip_ports.keys():
-            fingerprint = f"{ip}:MASS_SCAN"
-            upsert_attack(
-                cursor,
-                attack_type="MASS_SCAN",
-                src_ip=ip,
-                fingerprint=fingerprint,
-                severity="HIGH"
-            )
-
-    # ================= SYN FLOOD =================
-    tcp_stats = defaultdict(lambda: {
-        "syn": 0,
-        "ack": 0,
-        "syn_ack": 0,
-        "fin": 0
-    })
-
-    for pkt in detection_packets:
-        if pkt["protocol"] != "TCP" or not pkt["tcp_flags"]:
-            continue
-
-        flag = pkt["tcp_flags"]
-        ip = pkt["src_ip"]
-
-        if flag == "S":
-            tcp_stats[ip]["syn"] += 1
-        elif flag == "SA":
-            tcp_stats[ip]["syn_ack"] += 1
-        elif flag in ("A", "PA"):
-            tcp_stats[ip]["ack"] += 1
-        elif flag in ("F", "FA"):
-            tcp_stats[ip]["fin"] += 1
-
-    for ip, stats in tcp_stats.items():
-        total = sum(stats.values())
-        if total < MIN_PACKETS:
-            continue
-
-        syn_ratio = stats["syn"] / total
-        ack_ratio = stats["ack"] / total
-
-        if syn_ratio >= SYN_RATIO_THRESHOLD and ack_ratio < 0.2:
-            fingerprint = f"{ip}:SYN_FLOOD"
-            severity = "HIGH"
-
-            upsert_attack(
-                cursor,
-                attack_type="SYN_FLOOD",
-                src_ip=ip,
-                fingerprint=fingerprint,
-                severity=severity
-            )
-
-    connection.commit()
-    cursor.close()
-    connection.close()
+   
 
 
 
@@ -1445,7 +1770,4 @@ if __name__ == "__main__" and RUN_ENGINE:
         sys_info.process()
         print("check suspiciousness")
         sys_info.check_suspiciousness()
-        fetch_last_30_min_packets()
-
-
-
+        
