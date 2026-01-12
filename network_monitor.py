@@ -100,6 +100,8 @@ PROTO_MAP = {
 }
 
 def log_packet(packet):
+    if Raw in packet:
+    	print(packet[Raw].load)
     print(packet[Raw].load)
     global request_queue, data
     try:
