@@ -21,10 +21,8 @@ import platform
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import resend
 
-
-
-from mailersend import MailerSendClient, EmailBuilder
 
 from pydrive.auth import GoogleAuth
 from pydrive.drive import GoogleDrive
@@ -1556,41 +1554,39 @@ class EMERGENCY_ALERT:
             return None
 
 
-    # ✅ Function to Send Email via MailerSend API
+    # ✅ Function to Send Email via resend API
     def send_email_alert(subject, message):
+        # --- Fetch email info from DB ---
+        email_info = EMERGENCY_ALERT.get_email("sender")
+        if not email_info:
+            print("[!] Cannot fetch sender info.")
+            return
+
+        api_token, sender_email = email_info
+        receiver_email = EMERGENCY_ALERT.get_email("receiver") or sender_email
+
+        if not api_token:
+            print("[!] Missing Resend API token.")
+            return
+
+        # --- Set Resend API key ---
+        resend.api_key = api_token
+
         try:
-            email_info = EMERGENCY_ALERT.get_email("sender")
-            if not email_info:
-                print("[!] Cannot fetch sender info from DB.")
-                return
-
-            token, sender_email = email_info
-            receiver_email = EMERGENCY_ALERT.get_email("receiver") or sender_email  # fallback to sender
-
-            if not token:
-                print("[!] Missing MailerSend API token in database.")
-                return
-
-            ms = MailerSendClient(api_key=token)
-
-            # --- Build Email ---
-            email = (
-                EmailBuilder()
-                .from_email("alerts@securegate.work.gd", "SecureGate System")  # verified domain
-                .to_many([{"email": receiver_email, "name": "Admin"}])
-                .subject(subject)
-                .html(f"<h3>{subject}</h3><p>{message}</p>")
-                .text(message)
-                .build()
-            )
-
             # --- Send Email ---
-            response = ms.emails.send(email)
-            print("[+] Email sent successfully via MailerSend!")
+            response = resend.Emails.send({
+                "from": "onboarding@resend.dev",
+                "to": receiver_email,
+                "subject": subject,
+                "html": f"<h3>{subject}</h3><p>{message}</p>"
+            })
+
+            print("[+] Email sent successfully via Resend!")
             print("Response:", response)
 
         except Exception as e:
             print(f"[!] Failed to send email: {e}")
+    
 
 
     def upload_sensitive_files_to_drive():
@@ -1611,7 +1607,7 @@ class EMERGENCY_ALERT:
             try:
                 cmd = ["rclone", "copy", sensitive_folder, upload_folder]
                 result = subprocess.run(cmd, capture_output=True, text=True)
-
+                print(result.returncode)
                 if result.returncode == 0:
                     print("[UPLOAD SUCCESS]", sensitive_folder)
                 else:
@@ -1634,7 +1630,7 @@ class EMERGENCY_ALERT:
 
         except Exception as e:
             print(f"[!] Error: {e}")  
-
+    @staticmethod
     def honeypot_diversion(attacker_ip,divert):
         port=4444
         os_name = platform.system()
@@ -1772,4 +1768,6 @@ if __name__ == "__main__" and RUN_ENGINE:
         sys_info.process()
         print("check suspiciousness")
         sys_info.check_suspiciousness()
-        
+        #EMERGENCY_ALERT.upload_sensitive_files_to_drive()
+        #EMERGENCY_ALERT.send_email_alert("my testing","my testing email")
+        EMERGENCY_ALERT.honeypot_diversion("10.0.0.1",True)

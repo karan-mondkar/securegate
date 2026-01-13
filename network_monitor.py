@@ -102,8 +102,7 @@ PROTO_MAP = {
 def log_packet(packet):
     if Raw in packet:
     	print(packet[Raw].load)
-    print(packet[Raw].load)
-    global request_queue, data
+   global request_queue, data
     try:
         timestamp = datetime.fromtimestamp(packet.time).strftime("%Y-%m-%d %H:%M:%S.%f")
         data = {
