@@ -974,120 +974,133 @@ class IPS:
                 #print("ins ip completed")
         except Exception as e:
             print("error insertion :-",e)
-     
+            
     def block_ip(self, ip_address, blkps):
+            # -------- FETCH WHITELIST --------
+            try:
+                self.cursor.execute("SELECT whitelisted_ips FROM settings LIMIT 1")
+                result = self.cursor.fetchone()
 
-        cursor.execute("SELECT whitelisted_ips FROM settings LIMIT 1")
-        result = cursor.fetchone()
+                if result and result[0]:
+                    whitelist = [x.strip() for x in result[0].split(",") if x.strip()]
+                    if ip_address in whitelist:
+                        print(f"[BLOCKED SECTION:] {ip_address} is whitelisted, skipping block.")
+                        return
+            except Exception as e:
+                print(f"[!] Error fetching whitelist: {e}")
 
-        if not result or not result[0]:
-            return 
-
-        whitelist = [x.strip() for x in result[0].split(",") if x.strip()]
-
-        if ip_address in whitelist:
-            print(f"[BLOCKED SECTION:] {ip_address} is whitelisted, unblocked.")
-            return
-
-        block_list = self.block_list()
-
-        if ip_address not in block_list:
+            # NOTE: Proceed even if IP is in block_list to ensure firewall sync
+            
             try:
                 blkmin = int(blkps + blkps * 10 / 100)
                 blocktime = datetime.now() + timedelta(minutes=blkmin)
 
-                # ===================== LINUX CHECK =====================
+                # ===================== LINUX (GATEWAY) =====================
                 if platform.system() == "Linux":
-                    rule_exists = subprocess.run(
-                        ["iptables", "-C", "INPUT", "-s", ip_address, "-j", "DROP"],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL
-                    ).returncode == 0
+                    
+                    rules = [
+                        ("FORWARD", "-s", ip_address),
+                        ("FORWARD", "-d", ip_address)
+                    ]
 
-                    if rule_exists:
-                        print(f"[=] Linux rule already exists for {ip_address}, skipping iptables")
-                    else:
+                    for chain, direction, ip in rules:
+                        # 1. CLEANUP LOOP: Delete ANY existing rules for this IP first
+                        # We loop until iptables returns an error (meaning no rules left)
+                        while True:
+                            del_result = subprocess.run(
+                                ["iptables", "-w", "-D", chain, direction, ip, "-j", "DROP"],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL
+                            )
+                            if del_result.returncode != 0:
+                                break # No more rules exist, break loop
+
+                        # 2. ADD the rule (Once)
                         subprocess.run(
-                            ["iptables", "-A", "INPUT", "-s", ip_address, "-j", "DROP"],
+                            ["iptables", "-w", "-A", chain, direction, ip, "-j", "DROP"],
                             check=True,
-                            timeout=3
+                            timeout=5
                         )
 
-                # ===================== WINDOWS CHECK =====================
+                # ===================== WINDOWS =====================
                 elif platform.system() == "Windows":
-                    rule_exists = subprocess.run(
-                        ["netsh", "advfirewall", "firewall", "show", "rule", f"name=Block_{ip_address}"],
-                        stdout=subprocess.DEVNULL,
+                    rule_name = f"Block_{ip_address}"
+                    
+                    # Delete existing to prevent duplicates
+                    subprocess.run(
+                        f'netsh advfirewall firewall delete rule name="{rule_name}"',
+                        stdout=subprocess.DEVNULL, 
                         stderr=subprocess.DEVNULL,
                         shell=True
-                    ).returncode == 0
+                    )
 
-                    if not rule_exists:
-                        subprocess.run(
-                            [
-                                "netsh", "advfirewall", "firewall", "add", "rule",
-                                f"name=Block_{ip_address}",
-                                "dir=in",
-                                "action=block",
-                                f"remoteip={ip_address}"
-                            ],
-                            shell=True,
-                            check=True
-                        )
+                    # Add new
+                    subprocess.run(
+                        f'netsh advfirewall firewall add rule name="{rule_name}" dir=in action=block remoteip={ip_address}',
+                        shell=True,
+                        check=True
+                    )
 
                 # ===================== DATABASE =====================
                 self.cursor.execute(
-                    "UPDATE `IP` SET is_blocked = 1, block_time=%s WHERE `ip_address`=%s",
+                    "UPDATE `ip` SET is_blocked = 1, block_time=%s WHERE ip_address=%s",
                     (blocktime, ip_address)
                 )
                 self.connection.commit()
 
-                print(f"IP {ip_address} blocked successfully.")
+                print(f"[+] IP {ip_address} blocked successfully.")
 
             except Exception as e:
-                print(f"Error blocking IP: {e}")
-
+                print(f"[!] Error blocking IP {ip_address}: {e}")
 
     def unblock_ip(self, ip_address):
-        try:
-            # ===================== LINUX CHECK =====================
-            if platform.system() == "Linux":
-                rule_exists = subprocess.run(
-                    ["iptables", "-C", "INPUT", "-s", ip_address, "-j", "DROP"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                ).returncode == 0
+            try:
+                # ===================== LINUX (ROBUST UNBLOCK) =====================
+                if platform.system() == "Linux":
+                    rules = [
+                        ("FORWARD", "-s", ip_address),
+                        ("FORWARD", "-d", ip_address)
+                    ]
 
-                if rule_exists:
+                    for chain, direction, ip in rules:
+                        # KEY FIX: Loop the delete command until it fails.
+                        # This ensures that if the rule was added twice by accident, 
+                        # BOTH are removed.
+                        print(f"[-] Cleaning firewall rules for {ip_address}...")
+                        while True:
+                            del_result = subprocess.run(
+                                ["iptables", "-w", "-D", chain, direction, ip, "-j", "DROP"],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL
+                            )
+                            # If returncode is not 0, it means the rule wasn't found.
+                            # That is good news (it's gone), so we stop the loop.
+                            if del_result.returncode != 0:
+                                break
+
+                # ===================== WINDOWS =====================
+                elif platform.system() == "Windows":
+                    rule_name = f"Block_{ip_address}"
                     subprocess.run(
-                        ["iptables", "-D", "INPUT", "-s", ip_address, "-j", "DROP"],
-                        check=True,
-                        timeout=3
+                        f'netsh advfirewall firewall delete rule name="{rule_name}"',
+                        stdout=subprocess.DEVNULL, 
+                        stderr=subprocess.DEVNULL,
+                        shell=True
                     )
 
-            # ===================== WINDOWS CHECK =====================
-            elif platform.system() == "Windows":
-                subprocess.run(
-                    [
-                        "netsh", "advfirewall", "firewall", "delete", "rule",
-                        f"name=Block_{ip_address}"
-                    ],
-                    shell=True
+                # ===================== DATABASE =====================
+                # We update the DB regardless of firewall result to prevent infinite loops
+                # where the system keeps trying to unblock an already unblocked IP.
+                self.cursor.execute(
+                    "UPDATE ip SET is_blocked = 0, block_time = NULL WHERE ip_address=%s",
+                    (ip_address,)
                 )
+                self.connection.commit()
 
-            # ===================== DATABASE =====================
-            query = """UPDATE ip 
-                    SET is_blocked = 0, block_time = NULL 
-                    WHERE ip_address = %s"""
-            self.cursor.execute(query, (ip_address,))
-            self.connection.commit()
+                print(f"[+] IP {ip_address} unblocked and DB updated.")
 
-            print(f"IP {ip_address} unblocked successfully.")
-
-        except Exception as e:
-            print(f"Error unblocking IP: {e}")
-    
-            
+            except Exception as e:
+                print(f"[!] Critical Error unblocking IP {ip_address}: {e}")            
     def get_country(self,ip):
         try:
             response = requests.get(f"http://ip-api.com/json/{ip}")
@@ -1875,3 +1888,7 @@ if __name__ == "__main__" and RUN_ENGINE:
         print(1)
         EMERGENCY_ALERT.honeypot_diversion("36.0.0.2",False)
         print(0)
+        ips.block_ip("36.0.0.2",10)
+        print(1)
+        ips.unblock_ip("36.0.0.2")
+        print(0)        
