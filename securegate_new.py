@@ -975,7 +975,7 @@ class IPS:
         except Exception as e:
             print("error insertion :-",e)
      
-    def block_ip(self,ip_address,blkps):
+    def block_ip(self, ip_address, blkps):
 
         cursor.execute("SELECT whitelisted_ips FROM settings LIMIT 1")
         result = cursor.fetchone()
@@ -983,55 +983,109 @@ class IPS:
         if not result or not result[0]:
             return 
 
-        whitelist = result[0].split(",")  # CSV → list
+        whitelist = [x.strip() for x in result[0].split(",") if x.strip()]
 
-    
-        whitelist = [x.strip() for x in whitelist if x.strip()]
-
-       
         if ip_address in whitelist:
             print(f"[BLOCKED SECTION:] {ip_address} is whitelisted, unblocked.")
             return
 
-        block_list=self.block_list()
+        block_list = self.block_list()
+
         if ip_address not in block_list:
             try:
-                
-                #if not self.loopback(ip_address):
-                    blkmin=int(blkps+blkps*10/100)
-                    blocktime= datetime.now()+ timedelta(minutes=blkmin)
-                    print("Blocktime type:", type(blocktime))
-                    print("IP:", repr(ip_address))
-                    cursor = self.connection.cursor()
-                    #subprocess.run(["sudo", "iptables", "-A", "INPUT", "-s", ip_address, "-j", "DROP"], check=True)    
-                    #subprocess.run(["sudo", "iptables", "-A", "FORWARD", "-s", ip_address, "-j", "DROP"],check=True)
-                    #  IP table
-                    self.cursor.execute(
+                blkmin = int(blkps + blkps * 10 / 100)
+                blocktime = datetime.now() + timedelta(minutes=blkmin)
+
+                # ===================== LINUX CHECK =====================
+                if platform.system() == "Linux":
+                    rule_exists = subprocess.run(
+                        ["iptables", "-C", "INPUT", "-s", ip_address, "-j", "DROP"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    ).returncode == 0
+
+                    if rule_exists:
+                        print(f"[=] Linux rule already exists for {ip_address}, skipping iptables")
+                    else:
+                        subprocess.run(
+                            ["iptables", "-A", "INPUT", "-s", ip_address, "-j", "DROP"],
+                            check=True,
+                            timeout=3
+                        )
+
+                # ===================== WINDOWS CHECK =====================
+                elif platform.system() == "Windows":
+                    rule_exists = subprocess.run(
+                        ["netsh", "advfirewall", "firewall", "show", "rule", f"name=Block_{ip_address}"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        shell=True
+                    ).returncode == 0
+
+                    if not rule_exists:
+                        subprocess.run(
+                            [
+                                "netsh", "advfirewall", "firewall", "add", "rule",
+                                f"name=Block_{ip_address}",
+                                "dir=in",
+                                "action=block",
+                                f"remoteip={ip_address}"
+                            ],
+                            shell=True,
+                            check=True
+                        )
+
+                # ===================== DATABASE =====================
+                self.cursor.execute(
                     "UPDATE `IP` SET is_blocked = 1, block_time=%s WHERE `ip_address`=%s",
                     (blocktime, ip_address)
-                    )
-                    self.connection.commit()
-                    print("Rows affected:", self.cursor.rowcount)
-                    print(f"IP {ip_address} has been blocked in all tables.")
+                )
+                self.connection.commit()
+
+                print(f"IP {ip_address} blocked successfully.")
 
             except Exception as e:
                 print(f"Error blocking IP: {e}")
 
-    def unblock_ip(self,ip_address):
+
+    def unblock_ip(self, ip_address):
         try:
-            global connection
-            cursor = connection.cursor()
-            #subprocess.run(["sudo", "iptables", "-D", "INPUT", "-s", ip_address, "-j", "DROP"], check=True)
-            #subprocess.run(["sudo", "iptables", "-D", "FORWARD", "-s", ip_address, "-j", "DROP"],check=False)
-            #  IP table
+            # ===================== LINUX CHECK =====================
+            if platform.system() == "Linux":
+                rule_exists = subprocess.run(
+                    ["iptables", "-C", "INPUT", "-s", ip_address, "-j", "DROP"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                ).returncode == 0
+
+                if rule_exists:
+                    subprocess.run(
+                        ["iptables", "-D", "INPUT", "-s", ip_address, "-j", "DROP"],
+                        check=True,
+                        timeout=3
+                    )
+
+            # ===================== WINDOWS CHECK =====================
+            elif platform.system() == "Windows":
+                subprocess.run(
+                    [
+                        "netsh", "advfirewall", "firewall", "delete", "rule",
+                        f"name=Block_{ip_address}"
+                    ],
+                    shell=True
+                )
+
+            # ===================== DATABASE =====================
             query = """UPDATE ip 
-                   SET is_blocked = 0, block_time = NULL 
-                   WHERE ip_address = %s"""
+                    SET is_blocked = 0, block_time = NULL 
+                    WHERE ip_address = %s"""
             self.cursor.execute(query, (ip_address,))
-            connection.commit()
-      
+            self.connection.commit()
+
+            print(f"IP {ip_address} unblocked successfully.")
+
         except Exception as e:
-            print(f"Error blocking IP: {e}")    
+            print(f"Error unblocking IP: {e}")
     
             
     def get_country(self,ip):
@@ -1630,99 +1684,146 @@ class EMERGENCY_ALERT:
 
         except Exception as e:
             print(f"[!] Error: {e}")  
-    @staticmethod
-    def honeypot_diversion(attacker_ip,divert):
-        port=4444
+
+
+
+
+
+
+
+    def honeypot_diversion(attacker_ip, divert, port=None):
+        import subprocess
+        import platform
+
         os_name = platform.system()
+
+        # ---------------- FETCH HONEYPOT IP ----------------
         try:
             cursor.execute("SELECT honeypot_ips FROM settings LIMIT 1")
             row = cursor.fetchone()
-
             if not row or not row[0]:
-                return None
+                print("[!] No honeypot IP configured")
+                return
+            honeypot_ip = row[0].split(",")[0].strip()
+        except Exception as e:
+            print("[!] Honeypot fetch failed:", e)
+            return
 
-            honeypot_ip= row[0].split(",")[0].strip()
-        except:
-            print("Honeypot not found")
-        
-        if divert:
-            # ---------------- ADD DIVERSION ----------------
-            if os_name == "Linux":
+        IPTABLES = "/usr/sbin/iptables"
+
+        # ====================== LINUX ======================
+        if os_name == "Linux":
+
+            # Ensure forwarding
+            subprocess.run(
+                ["sysctl", "-w", "net.ipv4.ip_forward=1"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+
+            # ---------------- ADD RULES ----------------
+            if divert:
                 subprocess.run(
                     [
-                        "iptables", "-t", "nat", "-A", "PREROUTING",
+                        IPTABLES, "-t", "nat", "-I", "PREROUTING",
                         "-s", attacker_ip,
-                        "-j", "DNAT", "--to-destination", honeypot_ip
+                        "-j", "DNAT",
+                        "--to-destination", honeypot_ip
                     ],
                     check=True
                 )
 
-            elif os_name == "Windows":
                 subprocess.run(
                     [
-                        "netsh", "interface", "portproxy", "add", "v4tov4",
-                        "listenaddress=0.0.0.0",
-                        f"listenport={port}",
-                        f"connectaddress={honeypot_ip}",
-                        f"connectport={port}"
+                        IPTABLES, "-I", "FORWARD",
+                        "-s", attacker_ip,
+                        "-d", honeypot_ip,
+                        "-j", "ACCEPT"
                     ],
-                    shell=True,
                     check=True
                 )
 
-            else:
-                print("Unsupported OS:", os_name)
+                subprocess.run(
+                    [
+                        IPTABLES, "-I", "FORWARD",
+                        "-s", honeypot_ip,
+                        "-d", attacker_ip,
+                        "-j", "ACCEPT"
+                    ],
+                    check=True
+                )
 
+                print(f"[+] Diversion enabled for {attacker_ip}")
+                return
+
+            # ---------------- REMOVE ALL RULES ----------------
+            print(f"[-] FULL cleanup for {attacker_ip}")
+
+            def delete_matching_rules(table, chain, match_tokens):
+                while True:
+                    result = subprocess.run(
+                        [IPTABLES, "-t", table, "-L", chain, "-n", "--line-numbers"],
+                        capture_output=True,
+                        text=True
+                    )
+
+                    lines = result.stdout.splitlines()
+                    deleted = False
+
+                    for line in reversed(lines):
+                        if all(token in line for token in match_tokens):
+                            rule_num = line.split()[0]
+                            subprocess.run(
+                                [IPTABLES, "-t", table, "-D", chain, rule_num],
+                                check=True
+                            )
+                            deleted = True
+                            break
+
+                    if not deleted:
+                        break
+
+            # Delete ALL DNAT rules
+            delete_matching_rules(
+                "nat",
+                "PREROUTING",
+                [attacker_ip, honeypot_ip]
+            )
+
+            # Delete ALL FORWARD rules attacker → honeypot
+            delete_matching_rules(
+                "filter",
+                "FORWARD",
+                [attacker_ip, honeypot_ip]
+            )
+
+            # Delete ALL FORWARD rules honeypot → attacker
+            delete_matching_rules(
+                "filter",
+                "FORWARD",
+                [honeypot_ip, attacker_ip]
+            )
+
+            print("[✓] ALL matching rules removed")
+
+        # ===================== WINDOWS =====================
+        elif os_name == "Windows":
+            action = "add" if divert else "delete"
+            subprocess.run(
+                [
+                    "netsh", "interface", "portproxy", action, "v4tov4",
+                    "listenaddress=0.0.0.0",
+                    f"listenport={port}",
+                    f"connectaddress={honeypot_ip}",
+                    f"connectport={port}"
+                ],
+                shell=True,
+                check=True
+            )
+
+        # ================== UNSUPPORTED ====================
         else:
-            # ---------------- UNDO DIVERSION ----------------
-            if os_name == "Linux":
-                subprocess.run(
-                    [
-                        "iptables", "-t", "nat", "-D", "PREROUTING",
-                        "-s", attacker_ip,
-                        "-j", "DNAT", "--to-destination", honeypot_ip
-                    ],
-                    check=True
-                )
-
-            elif os_name == "Windows":
-                subprocess.run(
-                    [
-                        "netsh", "interface", "portproxy", "delete", "v4tov4",
-                        "listenaddress=0.0.0.0",
-                        f"listenport={port}"
-                    ],
-                    shell=True,
-                    check=True
-                )
-
-            else:
-                print("Unsupported OS:", os_name)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+            print("[!] Unsupported OS:", os_name)
 
 
 from collections import defaultdict
@@ -1770,4 +1871,7 @@ if __name__ == "__main__" and RUN_ENGINE:
         sys_info.check_suspiciousness()
         #EMERGENCY_ALERT.upload_sensitive_files_to_drive()
         #EMERGENCY_ALERT.send_email_alert("my testing","my testing email")
-        EMERGENCY_ALERT.honeypot_diversion("10.0.0.1",True)
+        EMERGENCY_ALERT.honeypot_diversion("36.0.0.2",True)
+        print(1)
+        EMERGENCY_ALERT.honeypot_diversion("36.0.0.2",False)
+        print(0)

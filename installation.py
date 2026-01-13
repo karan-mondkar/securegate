@@ -1,4 +1,5 @@
 import os
+import sys
 import subprocess
 import shutil
 import requests
@@ -6,7 +7,7 @@ import importlib.util
 import platform
 
 # --------------------------------------------------
-# 1. Dependency check (Python libs)
+# 1. Dependency check + auto install (GLOBAL & SAFE)
 # --------------------------------------------------
 
 libraries = {
@@ -19,6 +20,7 @@ libraries = {
     "scipy": "scipy",
     "psutil": "psutil",
     "PIL": "Pillow",
+    "resend": "resend"
 }
 
 def is_module_installed(module_name):
@@ -27,15 +29,35 @@ def is_module_installed(module_name):
     except Exception:
         return False
 
+def install_package(package):
+    print(f"⬇ Installing {package} ...")
+    try:
+        # First attempt (normal pip)
+        subprocess.check_call([
+            sys.executable, "-m", "pip", "install", package
+        ])
+    except subprocess.CalledProcessError as e:
+        # Kali / Debian PEP 668 fallback
+        print(f"⚠ Normal install failed for {package}")
+        print("🔓 Retrying with --break-system-packages (Kali/Linux)...")
+
+        subprocess.check_call([
+            sys.executable, "-m", "pip", "install",
+            "--break-system-packages",
+            package
+        ])
+
 print("\n🔍 Checking required Python libraries...\n")
 
 for module, pip_name in libraries.items():
     if is_module_installed(module):
         print(f"✔ {pip_name} already installed")
     else:
-        print(f"❌ {pip_name} NOT installed (install manually)")
+        print(f"❌ {pip_name} NOT installed")
+        install_package(pip_name)
+        print(f"✔ {pip_name} installed successfully")
 
-print("\n📦 Library check complete.\n")
+print("\n📦 All required libraries are ready.\n")
 
 # --------------------------------------------------
 # 2. Download SecureGate files
@@ -79,8 +101,8 @@ system = platform.system()
 if system == "Linux":
     if not shutil.which("xterm"):
         print("\n🖥 xterm not found. Installing xterm...\n")
-        subprocess.check_call(["apt", "update"])
-        subprocess.check_call(["apt", "install", "-y", "xterm"])
+        subprocess.check_call(["sudo", "apt", "update"])
+        subprocess.check_call(["sudo", "apt", "install", "-y", "xterm"])
     else:
         print("✔ xterm already installed")
 
@@ -88,7 +110,7 @@ if system == "Linux":
 # 4. Launch SecureGate scripts
 # --------------------------------------------------
 
-python_cmd = shutil.which("python3") or shutil.which("python")
+python_cmd = sys.executable
 if not python_cmd:
     raise RuntimeError("No Python interpreter found!")
 
@@ -111,12 +133,11 @@ for script in project_files:
         subprocess.Popen(["cmd", "/k", python_cmd, script])
 
     elif system == "Linux":
-       subprocess.Popen([
-    "xterm",
-    "-hold",
-    "-e",
-    f"{python_cmd} {script}"
-])
-
+        subprocess.Popen([
+            "xterm",
+            "-hold",
+            "-e",
+            f"{python_cmd} {script}"
+        ])
 
 print("\n✅ SecureGate launched successfully.\n")
