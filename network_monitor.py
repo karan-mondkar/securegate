@@ -1,5 +1,3 @@
-iface_name = "Wi-Fi"
-
 from scapy.all import sniff, Ether, IP, IPv6, TCP, UDP, ICMP, Raw
 from scapy.layers.l2 import ARP
 from datetime import datetime
@@ -10,34 +8,66 @@ import json
 import queue
 import psutil
 
+# -------------------------------------------------
+# IMPORT GLOBAL CONFIG (ONLY CHANGE)
+# -------------------------------------------------
+from securegate_new import (
+    INTERFACE_NAME,
+    SECUREGATE_PACKET_QUEUE_SIZE,
+    SECUREGATE_LOG_FILE_STAGE1,
+    SECUREGATE_LOG_FILE_STAGE2,
+    SECUREGATE_LOG_FILE_IMPORTANT,
+    SECUREGATE_LOG_COPY_INTERVAL
+)
+
+# -------------------------------------------------
+# INTERFACE (GLOBAL CONFIG)
+# -------------------------------------------------
+iface_name = INTERFACE_NAME
+
+
 def choose_interface():
     """
     Lists all network interfaces and prompts the user to choose one.
+    (Kept as-is, only informational)
     """
     interfaces = list(psutil.net_if_addrs().keys())
     print("Available Network Interfaces:")
     for i, iface_name in enumerate(interfaces):
         print(f"  {i}: {iface_name}")
 
+
 choose_interface()
 
 last_run = 0
 
-# Ensure files exist
-open("securegate_detailed_log1.json", "a").close()
-open("securegate_detailed_log2.json", "a").close()
-open("imp_detailed_log.json", "a").close()
+# -------------------------------------------------
+# ENSURE LOG FILES EXIST (GLOBAL VALUES)
+# -------------------------------------------------
+open(SECUREGATE_LOG_FILE_STAGE1, "a").close()
+open(SECUREGATE_LOG_FILE_STAGE2, "a").close()
+open(SECUREGATE_LOG_FILE_IMPORTANT, "a").close()
+
 
 def safe(data, key, default="N/A"):
     return str(data.get(key, default)).strip()
 
-request_queue = queue.Queue(maxsize=50000)
+
+# -------------------------------------------------
+# QUEUE SIZE (GLOBAL VALUE)
+# -------------------------------------------------
+request_queue = queue.Queue(maxsize=SECUREGATE_PACKET_QUEUE_SIZE)
+
 
 def logfile(data):
     global last_run
     current_time = time.time()
-    source_file = "securegate_detailed_log1.json"
-    destination_file = "securegate_detailed_log2.json"
+
+    # -------------------------------------------------
+    # LOG FILE PATHS (GLOBAL VALUES)
+    # -------------------------------------------------
+    source_file = SECUREGATE_LOG_FILE_STAGE1
+    destination_file = SECUREGATE_LOG_FILE_STAGE2
 
     request = {
         "Time": safe(data, "Time"),
@@ -46,6 +76,7 @@ def logfile(data):
         "Protocol": safe(data, "Protocol", "Unknown"),
         "Dst_Port": safe(data, "Dst_Port")
     }
+
     request_queue.put(request)
 
     # Process queue → write logs
@@ -57,17 +88,19 @@ def logfile(data):
                 f1.write(json.dumps(a) + "\n")
                 portalocker.unlock(f1)
 
-            with open("imp_detailed_log.json", "a") as f2:
+            with open(SECUREGATE_LOG_FILE_IMPORTANT, "a") as f2:
                 f2.write(json.dumps(a) + "\n")
 
         except portalocker.exceptions.LockException:
             print("File is locked, re-adding to queue")
             request_queue.put(a)
 
-    # Copy every 3 seconds
-    if current_time - last_run >= 3:
+    # -------------------------------------------------
+    # COPY INTERVAL (GLOBAL VALUE)
+    # -------------------------------------------------
+    if current_time - last_run >= SECUREGATE_LOG_COPY_INTERVAL:
         last_run = current_time
-        
+
         try:
             if os.path.exists(source_file):
                 with open(source_file, "r") as src:
@@ -85,6 +118,7 @@ def logfile(data):
         except Exception as e:
             print(f"Error during file copy or delete: {e}")
 
+
 PROTO_MAP = {
     1: "ICMP",
     2: "IGMP",
@@ -99,12 +133,16 @@ PROTO_MAP = {
     132: "SCTP",
 }
 
+
 def log_packet(packet):
     global request_queue, data
+
     if Raw in packet:
         print(packet[Raw].load)
+
     try:
         timestamp = datetime.fromtimestamp(packet.time).strftime("%Y-%m-%d %H:%M:%S.%f")
+
         data = {
             "Time": timestamp,
             "Protocol": "Unknown",
@@ -119,7 +157,6 @@ def log_packet(packet):
             "MAC_Src": "N/A",
             "MAC_Dst": "N/A",
 
-            # ---- Added important fields ----
             "Interface": packet.sniffed_on,
             "Packet_Length": len(packet),
             "Ether_Type": "N/A",
@@ -134,19 +171,16 @@ def log_packet(packet):
             "IPv6_TrafficClass": "N/A"
         }
 
-        # MAC
         if Ether in packet:
             data["MAC_Src"] = packet[Ether].src
             data["MAC_Dst"] = packet[Ether].dst
             data["Ether_Type"] = hex(packet[Ether].type)
 
-        # ARP
         if ARP in packet:
             data["Protocol"] = "ARP"
             data["Src_IP"] = packet[ARP].psrc
             data["Dst_IP"] = packet[ARP].pdst
 
-        # IPv4
         if IP in packet:
             proto_num = packet[IP].proto
             data["Protocol"] = PROTO_MAP.get(proto_num, f"Unknown({proto_num})")
@@ -156,7 +190,6 @@ def log_packet(packet):
             data["IP_Flags"] = str(packet[IP].flags)
             data["Fragment_Offset"] = packet[IP].frag
 
-        # IPv6
         elif IPv6 in packet:
             proto_num = packet[IPv6].nh
             data["Protocol"] = PROTO_MAP.get(proto_num, f"Unknown({proto_num})")
@@ -166,7 +199,6 @@ def log_packet(packet):
             data["IPv6_FlowLabel"] = packet[IPv6].fl
             data["IPv6_TrafficClass"] = packet[IPv6].tc
 
-        # TCP
         if TCP in packet:
             data["Protocol"] = "TCP"
             data["Src_Port"] = packet[TCP].sport
@@ -180,7 +212,6 @@ def log_packet(packet):
             if Raw in packet:
                 data["Payload_Size"] = len(packet[Raw].load)
 
-        # UDP
         elif UDP in packet:
             data["Protocol"] = "UDP"
             data["Src_Port"] = packet[UDP].sport
@@ -189,7 +220,6 @@ def log_packet(packet):
             if Raw in packet:
                 data["Payload_Size"] = len(packet[Raw].load)
 
-        # ICMP
         elif ICMP in packet:
             data["Protocol"] = "ICMP"
             data["ICMP_Type"] = packet[ICMP].type
@@ -206,5 +236,9 @@ def log_packet(packet):
     print(data)
     logfile(data)
 
+
+# -------------------------------------------------
+# PACKET CAPTURE LOOP (UNCHANGED)
+# -------------------------------------------------
 while True:
     sniff(iface=iface_name, prn=log_packet, store=False, count=0)

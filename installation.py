@@ -6,138 +6,247 @@ import requests
 import importlib.util
 import platform
 
-# --------------------------------------------------
-# 1. Dependency check + auto install (GLOBAL & SAFE)
-# --------------------------------------------------
+# ==================================================
+# CONFIG
+# ==================================================
 
-libraries = {
+BASE_DIR = os.path.abspath("securegate_files")
+
+ENGINE_SCRIPT = os.path.join(BASE_DIR, "securegate_new.py")
+MONITOR_SCRIPT = os.path.join(BASE_DIR, "network_monitor.py")
+GUI_SCRIPT = os.path.join(BASE_DIR, "gui.py")
+
+ENGINE_SERVICE = "securegate-engine"
+MONITOR_SERVICE = "securegate-monitor"
+
+# ==================================================
+# 1. DEPENDENCY CHECK
+# ==================================================
+
+LIBRARIES = {
     "mysql.connector": "mysql-connector-python",
     "requests": "requests",
     "scapy": "scapy",
     "portalocker": "portalocker",
     "matplotlib": "matplotlib",
     "bcrypt": "bcrypt",
-    "scipy": "scipy",
     "psutil": "psutil",
     "PIL": "Pillow",
-    "resend": "resend"
 }
 
-def is_module_installed(module_name):
-    try:
-        return importlib.util.find_spec(module_name) is not None
-    except Exception:
-        return False
+def module_installed(name):
+    return importlib.util.find_spec(name) is not None
 
-def install_package(package):
-    print(f"⬇ Installing {package} ...")
+def install_package(pkg):
+    print(f"⬇ Installing {pkg}")
     try:
-        # First attempt (normal pip)
-        subprocess.check_call([
-            sys.executable, "-m", "pip", "install", package
-        ])
-    except subprocess.CalledProcessError as e:
-        # Kali / Debian PEP 668 fallback
-        print(f"⚠ Normal install failed for {package}")
-        print("🔓 Retrying with --break-system-packages (Kali/Linux)...")
-
+        subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
+    except subprocess.CalledProcessError:
         subprocess.check_call([
             sys.executable, "-m", "pip", "install",
-            "--break-system-packages",
-            package
+            "--break-system-packages", pkg
         ])
 
-print("\n🔍 Checking required Python libraries...\n")
+def ensure_dependencies():
+    print("\n🔍 Checking Python dependencies\n")
+    for module, pkg in LIBRARIES.items():
+        if module_installed(module):
+            print(f"✔ {pkg}")
+        else:
+            print(f"❌ {pkg}")
+            install_package(pkg)
+    print("\n✔ All dependencies ready\n")
 
-for module, pip_name in libraries.items():
-    if is_module_installed(module):
-        print(f"✔ {pip_name} already installed")
-    else:
-        print(f"❌ {pip_name} NOT installed")
-        install_package(pip_name)
-        print(f"✔ {pip_name} installed successfully")
+# ==================================================
+# 2. DOWNLOAD FILES
+# ==================================================
 
-print("\n📦 All required libraries are ready.\n")
+FILES = {
+    "gui.py": "https://raw.githubusercontent.com/karan-mondkar/securegate/main/gui.py",
+    "securegate_new.py": "https://raw.githubusercontent.com/karan-mondkar/securegate/main/securegate_new.py",
+    "network_monitor.py": "https://raw.githubusercontent.com/karan-mondkar/securegate/main/network_monitor.py",
+    "securegate_image.ico": "https://raw.githubusercontent.com/karan-mondkar/securegate/main/securegate_image.ico"
+}
 
-# --------------------------------------------------
-# 2. Download SecureGate files
-# --------------------------------------------------
+def download_files():
+    os.makedirs(BASE_DIR, exist_ok=True)
+    print("⬇ Downloading SecureGate files\n")
 
-def download_file(url, save_dir="securegate_files"):
-    os.makedirs(save_dir, exist_ok=True)
-    filename = url.split("/")[-1]
-    path = os.path.join(save_dir, filename)
+    for name, url in FILES.items():
+        path = os.path.join(BASE_DIR, name)
+        if os.path.exists(path):
+            print(f"✔ {name} already exists")
+            continue
 
-    if os.path.exists(path):
-        print(f"✔ {filename} already exists")
+        r = requests.get(url, stream=True)
+        if r.status_code == 200:
+            with open(path, "wb") as f:
+                for chunk in r.iter_content(1024):
+                    f.write(chunk)
+            print(f"⬇ Downloaded {name}")
+        else:
+            print(f"❌ Failed to download {name}")
+            sys.exit(1)
+
+# ==================================================
+# 3. MYSQL CHECK
+# ==================================================
+def ensure_mysql_ready_or_exit():
+    print("\n🔍 Checking MySQL service (OS-level)\n")
+    system = platform.system()
+
+    def run(cmd):
+        return subprocess.call(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        ) == 0
+
+    if system == "Linux":
+        # MySQL may be mysql or mariadb
+        if run(["systemctl", "is-active", "--quiet", "mysql"]) or \
+           run(["systemctl", "is-active", "--quiet", "mariadb"]):
+            print("✔ MySQL/MariaDB service is running")
+            return
+
+        print("⚠ MySQL not running. Attempting to start...")
+        if run(["systemctl", "start", "mysql"]) or \
+           run(["systemctl", "start", "mariadb"]):
+            print("✔ MySQL service started")
+            return
+
+        print("❌ MySQL service failed to start")
+        sys.exit(1)
+
+    elif system == "Windows":
+        # Windows service name varies: MySQL, MySQL80, etc.
+        result = subprocess.check_output(
+            ["sc", "query"],
+            stderr=subprocess.DEVNULL,
+            text=True
+        )
+
+        mysql_services = [line.split()[0] for line in result.splitlines()
+                          if "MySQL" in line]
+
+        if not mysql_services:
+            print("❌ No MySQL service found on system")
+            sys.exit(1)
+
+        for svc in mysql_services:
+            if run(["sc", "query", svc]):
+                run(["net", "start", svc])
+                print(f"✔ MySQL service running: {svc}")
+                return
+
+        print("❌ MySQL service exists but could not be started")
+        sys.exit(1)
+
+# ==================================================
+# 4. SERVICES (LINUX)
+# ==================================================
+
+def create_linux_service(name, script):
+    service_path = f"/etc/systemd/system/{name}.service"
+
+    if os.path.exists(service_path):
+        print(f"✔ {name} service exists")
         return
 
-    r = requests.get(url, stream=True)
-    if r.status_code == 200:
-        with open(path, "wb") as f:
-            for chunk in r.iter_content(1024):
-                f.write(chunk)
-        print(f"⬇ Downloaded {filename}")
-    else:
-        print(f"❌ Failed to download {filename}")
+    python = sys.executable
+    content = f"""[Unit]
+Description=SecureGate {name}
+After=network.target mysql.service
 
-urls = [
-    "https://raw.githubusercontent.com/karan-mondkar/securegate/main/gui.py",
-    "https://raw.githubusercontent.com/karan-mondkar/securegate/main/network_monitor.py",
-    "https://raw.githubusercontent.com/karan-mondkar/securegate/main/securegate_new.py",
-    "https://raw.githubusercontent.com/karan-mondkar/securegate/main/securegate_image.ico",
-]
+[Service]
+ExecStart={python} {script}
+Restart=always
+RestartSec=5
+WorkingDirectory={BASE_DIR}
+User=root
 
-print("\n⬇ Downloading SecureGate files...\n")
-for url in urls:
-    download_file(url)
+[Install]
+WantedBy=multi-user.target
+"""
 
-# --------------------------------------------------
-# 3. Ensure terminal exists on Linux (xterm)
-# --------------------------------------------------
+    with open(service_path, "w") as f:
+        f.write(content)
 
-system = platform.system()
+    subprocess.check_call(["systemctl", "daemon-reload"])
+    subprocess.check_call(["systemctl", "enable", name])
+    subprocess.check_call(["systemctl", "start", name])
 
-if system == "Linux":
-    if not shutil.which("xterm"):
-        print("\n🖥 xterm not found. Installing xterm...\n")
-        subprocess.check_call(["sudo", "apt", "update"])
-        subprocess.check_call(["sudo", "apt", "install", "-y", "xterm"])
-    else:
-        print("✔ xterm already installed")
+    print(f"✔ Created Linux service: {name}")
 
-# --------------------------------------------------
-# 4. Launch SecureGate scripts
-# --------------------------------------------------
+# ==================================================
+# 5. SERVICES (WINDOWS)
+# ==================================================
 
-python_cmd = sys.executable
-if not python_cmd:
-    raise RuntimeError("No Python interpreter found!")
+def create_windows_service(name, script):
+    python = sys.executable
+    cmd = f'"{python}" "{script}"'
 
-project_files = [
-    "securegate_files/network_monitor.py",
-    "securegate_files/securegate_new.py",
-    "securegate_files/gui.py",
-]
+    exists = subprocess.call(
+        ["sc", "query", name],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    ) == 0
 
-print("\n🚀 Starting SecureGate scripts...\n")
+    if exists:
+        print(f"✔ {name} service exists")
+        return
 
-for script in project_files:
-    if not os.path.exists(script):
-        print(f"❌ File not found: {script}")
-        continue
+    subprocess.check_call([
+        "sc", "create", name,
+        "binPath=", cmd,
+        "start=", "auto"
+    ])
+    subprocess.check_call(["sc", "start", name])
 
-    print(f"▶ Launching: {script}")
+    print(f"✔ Created Windows service: {name}")
+
+# ==================================================
+# 6. ENSURE SERVICES RUNNING
+# ==================================================
+
+def ensure_services():
+    print("\n⚙ Ensuring SecureGate services\n")
+    system = platform.system()
+
+    if system == "Linux":
+        create_linux_service(ENGINE_SERVICE, ENGINE_SCRIPT)
+        create_linux_service(MONITOR_SERVICE, MONITOR_SCRIPT)
+
+    elif system == "Windows":
+        create_windows_service(ENGINE_SERVICE, ENGINE_SCRIPT)
+        create_windows_service(MONITOR_SERVICE, MONITOR_SCRIPT)
+
+# ==================================================
+# 7. LAUNCH GUI
+# ==================================================
+
+def launch_gui():
+    print("\n🖥 Launching SecureGate GUI\n")
+    system = platform.system()
 
     if system == "Windows":
-        subprocess.Popen(["cmd", "/k", python_cmd, script])
+        subprocess.Popen(["cmd", "/k", sys.executable, GUI_SCRIPT])
+    else:
+        if not shutil.which("xterm"):
+            subprocess.check_call(["apt", "install", "-y", "xterm"])
+        subprocess.Popen(["xterm", "-hold", "-e", f"{sys.executable} {GUI_SCRIPT}"])
 
-    elif system == "Linux":
-        subprocess.Popen([
-            "xterm",
-            "-hold",
-            "-e",
-            f"{python_cmd} {script}"
-        ])
+# ==================================================
+# MAIN
+# ==================================================
 
-print("\n✅ SecureGate launched successfully.\n")
+def main():
+    ensure_dependencies()
+    download_files()
+    ensure_mysql_ready_or_exit()
+    ensure_services()
+    launch_gui()
+    print("\n✅ SecureGate fully operational\n")
+
+if __name__ == "__main__":
+    main()

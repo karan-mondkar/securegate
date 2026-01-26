@@ -14,32 +14,65 @@ from securegate_new import *
 RUN_ENGINE=False
 validate_user=False
 current_page = 0
-rows_per_page = 15
+rows_per_page =  SECUREGATE_GUI_ROWS_PER_PAGE
 all_rows = []
 columns = []
+import re
+
+
+# The Global App State
+APP_STATE = {
+    "current_view": "dashboard", # Tracks which page the user is on
+    "current_page": 0,           # Tracks pagination
+    "rows_per_page": SECUREGATE_GUI_ROWS_PER_PAGE,
+    "search_query": "",          # Tracks if user filtered data
+    "last_data_type": "logs"     # Tracks if we were looking at blocked or unblocked
+}
+
+
 
 #global connection,cursor
 
 refresh_jobs = []  # List to store job IDs
+def global_refresh_job():
+    global refresh_jobs, APP_STATE
+    
+    # 1. Clear existing jobs to prevent stacking
+    clear_all_jobs()
 
+    # 2. Refresh logic based on active view
+    current_v = APP_STATE["current_view"]
+    
+    if current_v == "dashboard":
+        dashboardshow()
+    elif current_v == "data_logs":
+        # We don't change the data_type, just re-fetch for the current one
+        data_to_show(APP_STATE.get("last_page_name", "Logs"))
+
+    # 3. Schedule next refresh and save ID
+    new_job = root.after(SECUREGATE_GUI_REFRESH_INTERVAL * 1000, global_refresh_job)
+
+    refresh_jobs.append(new_job)
 def clear_all_jobs():
+    """Stops all scheduled background refresh tasks to prevent stacking."""
     global refresh_jobs
-    for job_id in refresh_jobs:
-        root.after_cancel(job_id)
+    for job in refresh_jobs:
+        try:
+            root.after_cancel(job)
+        except Exception:
+            pass
     refresh_jobs.clear()
-
-
-
 def db():
     try:
         global connection,cursor
         connection = mysql.connector.connect(
-            host="localhost",
-            user="root",
-            password="",
-            database="securegate"
-             ,autocommit=True   
-        )
+        host=SECUREGATE_DB_HOST,
+        user=SECUREGATE_DB_USER,
+        password=SECUREGATE_DB_PASS,
+        database=SECUREGATE_DB_NAME,
+        port=SECUREGATE_DB_PORT,
+        autocommit=True)
+
         cursor = connection.cursor()
         return (connection,cursor)
 
@@ -132,12 +165,14 @@ def custom_askyesno(title, message):
 def fetch_ips(tp):
     try:
         connection = mysql.connector.connect(
-            host="localhost",
-            user="root",
-            password="",
-            database="securegate"
-         ,autocommit=True  
+        host=SECUREGATE_DB_HOST,
+        user=SECUREGATE_DB_USER,
+        password=SECUREGATE_DB_PASS,
+        database=SECUREGATE_DB_NAME,
+        port=SECUREGATE_DB_PORT,
+        autocommit=True
         )
+
         cursor = connection.cursor()
 
         if tp == "blocked":
@@ -157,7 +192,7 @@ def fetch_ips(tp):
 import requests
 def get_country(ip):
     try:
-        response = requests.get(f"http://ip-api.com/json/{ip}")
+        response =requests.get(f"{SECUREGATE_GEOIP_API}/{ip}")
         data = response.json()
         if data.get("status") == "fail":
             return "Unknown"
@@ -222,90 +257,6 @@ def hash_password(plain_password):
 import collections
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-
-def show_bar_chart_by_country():
-    blocked = fetch_ips("blocked") or []
-    unblocked = fetch_ips("unblocked") or []
-
-    for widget in content_frame.winfo_children():
-        widget.destroy()
-
-    blocked_counts = collections.defaultdict(int)
-    for ip, country in blocked:
-        # Normalize country names: handle None, empty strings, and whitespace
-        if country is None or str(country).strip() == "":
-            country_name = "Unknown"
-        else:
-            country_name = str(country).strip() # Ensure it's a string and strip whitespace
-        blocked_counts[country_name] += 1
-
-    unblocked_counts = collections.defaultdict(int)
-    for ip, country in unblocked:
-        # Normalize country names
-        if country is None or str(country).strip() == "":
-            country_name = "Unknown"
-        else:
-            country_name = str(country).strip()
-        unblocked_counts[country_name] += 1
-
-    all_countries = sorted(list(set(blocked_counts.keys()) | set(unblocked_counts.keys())))
-
-    # Handle the case where there's no data at all
-    if not all_countries:
-        tk.Label(content_frame, text="No country data available to display chart.", font=("Arial", 14)).pack(pady=20)
-        return
-
-    blocked_values = [blocked_counts.get(country, 0) for country in all_countries]
-    unblocked_values = [unblocked_counts.get(country, 0) for country in all_countries]
-
-    fig, ax = plt.subplots(figsize=(10, 6)) # Increased figure size slightly for better readability
-    width = 0.35
-    x = range(len(all_countries))
-
-    rects1 = ax.bar(x, blocked_values, width, label='Blocked', color='red')
-    rects2 = ax.bar([i + width for i in x], unblocked_values, width, label='Unblocked', color='green')
-
-    ax.set_ylabel('Number of IPs')
-    ax.set_title('Blocked vs Unblocked IPs by Country')
-    ax.set_xticks([i + width / 2 for i in x])
-    ax.set_xticklabels(all_countries, rotation=45, ha='right') # Rotate labels for better fit
-    ax.legend()
-    fig.tight_layout() # Adjust layout to prevent labels from overlapping
-
-    canvas = FigureCanvasTkAgg(fig, master=content_frame)
-    canvas.draw()
-    canvas.get_tk_widget().pack(pady=20, fill="both", expand=True)
-
-    # --- Treeview Section ---
-    summary_frame = ttk.Frame(content_frame)
-    summary_frame.pack(fill='both', expand=True, padx=10, pady=5)
-
-    columns = ('country', 'blocked', 'unblocked')
-    tree = ttk.Treeview(summary_frame, columns=columns, show='headings', height=7)
-
-    tree.heading('country', text='Country')
-    tree.column('country', anchor='w', width=150)
-
-    tree.heading('blocked', text='Blocked')
-    tree.column('blocked', anchor='center', width=80)
-
-    tree.heading('unblocked', text='Unblocked')
-    tree.column('unblocked', anchor='center', width=80)
-
-    scrollbar = ttk.Scrollbar(summary_frame, orient='vertical', command=tree.yview)
-    tree.configure(yscrollcommand=scrollbar.set)
-
-    scrollbar.pack(side='right', fill='y')
-    tree.pack(side='left', fill='both', expand=True)
-
-    for country in all_countries:
-        blocked_count = blocked_counts.get(country, 0)
-        unblocked_count = unblocked_counts.get(country, 0)
-        tree.insert('', 'end', values=(country, blocked_count, unblocked_count))
-
-
-
-
 global admin_user, email, admin_pass,phone, time_limit, honeypot_ips,max_requests_per_ip,folder_path, allowed_ports, port_services,form_container,image_container,whitelist,blacklist,email_notify_var
 global interval_var, request_limit_var
 
@@ -416,398 +367,670 @@ def ins_honey(IP):
     cursor.execute(update_query, (updated_ips,))
     conn.commit()
 
-
-     
-
-
 def settingshow(setnum):
-    global admin_user, email, admin_pass,phone,max_requests_per_ip, time_limit, honeypot_ips,sensative_folder, folder_path, allowed_ports, port_services,form_container,image_container,new_email,whitelist,blacklist,folder_path
-    global interval_var, request_limit_var ,port,service,email_notify_var
+    global admin_user, email, admin_pass, phone, max_requests_per_ip, time_limit, honeypot_ips
+    global sensative_folder, folder_path, allowed_ports, port_services, form_container
+    global image_container, new_email, whitelist, blacklist, interval_var, request_limit_var 
+    global port, service, email_notify_var
 
+    # --- THE CRITICAL FIX: STOP BACKGROUND AUTO-REFRESH ---
+    # This prevents the Dashboard timer from clearing your Settings UI
+    clear_all_jobs() 
+    
+    # Update state so the global background job knows you are in Settings
+    APP_STATE["current_view"] = "Setting"
 
-    '''
-
-    1 for admin sign in
-    2 for admin log in
-    3 for other info taking
-    '''
+    # Clear existing widgets to prepare the new view
     for widget in content_frame.winfo_children():
         widget.destroy()
+
+    # ================= SETNUM 1: ADMIN SIGN IN =================
     if setnum == 1:
+        BG_COLOR, CARD_BG, ACCENT_BLUE, TEXT_DIM = "#f4f7f6", "#ffffff", "#3498db", "#7f8c8d"
         style = ttk.Style(root)
-        style.configure("Image.TFrame", background="#F2F4F7")
-        form_container = ttk.Frame(root, padding="20")
-        image_container = ttk.Frame(root, style="Image.TFrame")
-        form_container.pack(side="left", fill="y", padx=20, pady=20)
-        image_container.pack(side="right", expand=True, fill="both", padx=20, pady=20)
+        style.configure("Registration.TFrame", background=BG_COLOR)
         
-        settings_group = ttk.LabelFrame(form_container, text="Admin Account Setup", padding="15 10")
-        settings_group.grid(row=0, column=0, sticky="ew")
-        settings_group.columnconfigure(1, weight=1)
+        main_container = tk.Frame(content_frame, bg=BG_COLOR)
+        main_container.pack(fill="both", expand=True)
 
-        ttk.Label(settings_group, text="Admin Username").grid(row=0, column=0, padx=5, pady=10, sticky="w")
-        admin_user = ttk.Entry(settings_group, width=30)
-        admin_user.grid(row=0, column=1, padx=5, pady=10, sticky="ew")
+        form_container = tk.Frame(main_container, bg=BG_COLOR, padx=40)
+        form_container.pack(side="left", fill="y", pady=40)
 
-        ttk.Label(settings_group, text="Admin Email").grid(row=1, column=0, padx=5, pady=10, sticky="w")
-        email = ttk.Entry(settings_group)
-        email.grid(row=1, column=1, padx=5, pady=10, sticky="ew")
+        setup_card = tk.LabelFrame(form_container, text=" ACCOUNT INITIALIZATION ", 
+                                   font=("Segoe UI", 10, "bold"), fg=ACCENT_BLUE, bg=CARD_BG,
+                                   padx=30, pady=30, relief="flat", highlightthickness=1, 
+                                   highlightbackground="#dcdde1")
+        setup_card.pack(fill="both", expand=True)
 
-        ttk.Label(settings_group, text="Admin Password").grid(row=2, column=0, padx=5, pady=10, sticky="w")
-        admin_pass = ttk.Entry(settings_group, show="*")
-        admin_pass.grid(row=2, column=1, padx=5, pady=10, sticky="ew")
-        
-        ttk.Label(settings_group, text="Confirm Password").grid(row=3, column=0, padx=5, pady=10, sticky="w")
-        confirm_pass = ttk.Entry(settings_group, show="*")
-        confirm_pass.grid(row=3, column=1, padx=5, pady=10, sticky="ew")
+        def create_input(parent, label_text, is_pass=False):
+            tk.Label(parent, text=label_text, font=("Segoe UI", 9), fg=TEXT_DIM, bg=CARD_BG).pack(anchor="w", pady=(10, 0))
+            entry = ttk.Entry(parent, font=("Segoe UI", 11), show="*" if is_pass else "")
+            entry.pack(fill="x", pady=(5, 10), ipady=3)
+            return entry
 
-        confirm_button = ttk.Button(form_container, text="Confirm settings", command=lambda: update_setting("sign in"))
-        confirm_button.grid(row=1, column=0, pady=20)
+        admin_user = create_input(setup_card, "Admin Username")
+        email = create_input(setup_card, "Email Address")
+        admin_pass = create_input(setup_card, "Create Password", is_pass=True)
+        confirm_pass = create_input(setup_card, "Confirm Password", is_pass=True)
+
+        confirm_button = tk.Button(form_container, text="CREATE ADMIN ACCOUNT", command=lambda: update_setting("sign in"),
+                                   font=("Segoe UI", 10, "bold"), bg=ACCENT_BLUE, fg="white", relief="flat", 
+                                   cursor="hand2", padx=20, pady=10, activebackground="#2980b9")
+        confirm_button.pack(fill="x", pady=20)
+
+        image_container = tk.Frame(main_container, bg="#F2F4F7")
+        image_container.pack(side="right", expand=True, fill="both")
         try:
             original_image = Image.open("securegate_.png")
-            
             def resize_image(event):
                 new_width, new_height = event.width, event.height
+                if new_width <= 0 or new_height <= 0: return
                 original_aspect = original_image.width / original_image.height
                 container_aspect = new_width / new_height
-
                 if container_aspect > original_aspect:
                     height = new_height
                     width = int(height * original_aspect)
                 else:
                     width = new_width
                     height = int(width / original_aspect)
+                resized_image = original_image.resize((width, height), Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(resized_image)
+                image_label.config(image=photo); image_label.image = photo
 
-                if width > 0 and height > 0:
-                    resized_image = original_image.resize((width, height), Image.Resampling.LANCZOS)
-                    photo = ImageTk.PhotoImage(resized_image)
-                    image_label.config(image=photo)
-                    image_label.image = photo
-
-            image_label = ttk.Label(image_container, anchor="center")
+            image_label = tk.Label(image_container, bg="#F2F4F7")
             image_label.pack(expand=True, fill="both")
             image_container.bind("<Configure>", resize_image)
-
         except FileNotFoundError:
-            error_label = ttk.Label(image_container, text="securegate image not found.", justify="center")
-            error_label.pack(expand=True)
+            tk.Label(image_container, text="[ SecureGate Branding ]", font=("Segoe UI", 16, "italic"),
+                     fg="#bdc3c7", bg="#F2F4F7").pack(expand=True)
 
-
-
-
-    if setnum==2:
+    # ================= SETNUM 2: ADMIN LOG IN =================
+    if setnum == 2:
+        BG_COLOR, CARD_BG, ACCENT_DARK, PRIMARY_BLUE = "#f4f7f6", "#ffffff", "#2c3e50", "#3498db"
         sidebar.pack_forget()
-        database=db()
-        connection=database[0]
-        cursor=database[1]
+        
+        database = db()
+        connection, cursor = database[0], database[1]
         cursor.execute("SELECT admin_name, password_hash FROM settings")
         results = cursor.fetchall()
 
         if not results:
             settingshow(1)
         else:
-            login_container = ttk.Frame(content_frame)
-            login_container.pack(expand=True)
+            login_center_frame = tk.Frame(content_frame, bg=BG_COLOR)
+            login_center_frame.pack(expand=True, fill="both")
+            login_card = tk.Frame(login_center_frame, bg=CARD_BG, padx=40, pady=40,
+                                  highlightthickness=1, highlightbackground="#dcdde1")
+            login_card.place(relx=0.5, rely=0.5, anchor="center")
 
-            login_group = ttk.LabelFrame(login_container, text="Admin Login", padding=(20, 10))
-            login_group.pack(padx=20, pady=20)
+            tk.Label(login_card, text="SecureGate", font=("Segoe UI", 24, "bold"), fg=ACCENT_DARK, bg=CARD_BG).pack(pady=(0, 5))
+            tk.Label(login_card, text="Please enter your administrator credentials", font=("Segoe UI", 10), 
+                     fg="#7f8c8d", bg=CARD_BG).pack(pady=(0, 30))
 
-            login_group.columnconfigure(1, weight=1)
+            def create_login_field(parent, label_text, is_password=False):
+                tk.Label(parent, text=label_text, font=("Segoe UI", 10, "bold"), fg=ACCENT_DARK, bg=CARD_BG).pack(anchor="w", pady=(10, 0))
+                entry = ttk.Entry(parent, width=35, font=("Segoe UI", 11), show="*" if is_password else "")
+                entry.pack(fill="x", pady=(5, 10), ipady=5)
+                return entry
 
-            ttk.Label(login_group, text="Username:").grid(row=0, column=0, padx=10, pady=10, sticky="w")
-            admin_user = ttk.Entry(login_group, width=30, font=("Helvetica", 11))
-            admin_user.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
+            admin_user = create_login_field(login_card, "Username")
+            admin_pass = create_login_field(login_card, "Password", is_password=True)
 
-            ttk.Label(login_group, text="Password:").grid(row=1, column=0, padx=10, pady=10, sticky="w")
-            admin_pass = ttk.Entry(login_group, show="*", font=("Helvetica", 11))
-            admin_pass.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
-            
-            submit_button = ttk.Button(login_container, 
-                                    text="Submit", 
-                                    command=lambda: validate(admin_user.get(), admin_pass.get()))
-            submit_button.pack(pady=(0, 20), ipady=5)
+            submit_button = tk.Button(login_card, text="AUTHORIZE ACCESS", font=("Segoe UI", 10, "bold"),
+                                      bg=PRIMARY_BLUE, fg="white", relief="flat", cursor="hand2", pady=10,
+                                      command=lambda: validate(admin_user.get(), admin_pass.get()))
+            submit_button.pack(fill="x", pady=(20, 10))
+
+    # ================= SETNUM 3: MAIN CONFIGURATION =================
     if setnum == 3:
+        # --- ENHANCED THEME COLORS ---
+        BG_COLOR = "#f0f2f5"        # Light gray-blue surface
+        CARD_BG = "#ffffff"         # Pure white for cards
+        ACCENT_BLUE = "#0078d4"     # Standard modern primary blue
+        HOVER_GRAY = "#f3f4f6"      # Hover state for buttons
+        TEXT_MAIN = "#1a1d21"       # Deep charcoal for headings
+        TEXT_SUB = "#64748b"        # Muted slate for labels
+        BORDER_LIGHT = "#e2e8f0"    # Soft borders
+
+        # --- STYLE CUSTOMIZATION ---
         style = ttk.Style()
-        style.configure("TLabelFrame.Label", font=("Helvetica", 11, "bold"))
+        style.configure("TLabelFrame", background=BG_COLOR, borderwidth=0)
+        style.configure("TLabelFrame.Label", font=("Segoe UI Variable", 13, "bold"), foreground=TEXT_MAIN)
+        style.configure("TEntry", padding=8)
+        
+        # Main Scrollable Container
+        main_view = tk.Frame(content_frame, bg=BG_COLOR)
+        main_view.pack(fill="both", expand=True)
 
-        settings_container = ttk.Frame(content_frame, padding=5)
-        settings_container.pack(fill="both", expand=True)
+        # Header Section
+        header_frame = tk.Frame(main_view, bg=BG_COLOR)
+        header_frame.pack(fill="x", padx=50, pady=(30, 10))
+        tk.Label(header_frame, text="System Configuration", font=("Segoe UI Variable Display", 24, "bold"), 
+                 bg=BG_COLOR, fg=TEXT_MAIN).pack(side="left")
+        tk.Label(header_frame, text="Manage network security and notification protocols", font=("Segoe UI", 10), 
+                 bg=BG_COLOR, fg=TEXT_SUB).pack(side="left", padx=15, pady=(10, 0))
 
-        # ================= GENERAL SECTION =================
-        general_group = ttk.LabelFrame(settings_container, text="General", padding=8)
-        general_group.pack(fill="x", padx=8, pady=4)
-        general_group.columnconfigure(1, weight=1)
+        # Settings Wrapper
+        settings_container = tk.Frame(main_view, bg=BG_COLOR)
+        settings_container.pack(fill="both", expand=True, padx=50, pady=10)
 
-        ttk.Label(general_group, text="Mobile Number:").grid(row=0, column=0, padx=3, pady=4, sticky='w')
-        phone = ttk.Entry(general_group, width=25)
-        phone.grid(row=0, column=1, padx=3, pady=4, sticky='ew')
-        ttk.Button(general_group, text="Save", width=10, command=lambda: update_setting("phone")).grid(row=0, column=2, padx=3, pady=4)
+        # Standardized Row Function with Creativity
+        def add_setting_row(parent, row, label_text, widget_type="entry", cmd=None, var=None):
+            # Row Container
+            row_frame = tk.Frame(parent, bg=CARD_BG)
+            row_frame.grid(row=row, column=0, columnspan=3, sticky='ew', pady=1)
+            row_frame.columnconfigure(1, weight=1)
 
-        ttk.Label(general_group, text="Email:").grid(row=1, column=0, padx=3, pady=4, sticky='w')
-        new_email = ttk.Entry(general_group, width=25)
-        new_email.grid(row=1, column=1, padx=3, pady=4, sticky='ew')
-        ttk.Button(general_group, text="Save", width=10, command=lambda: update_setting("new email")).grid(row=1, column=2, padx=3, pady=4)
+            # Left Label
+            tk.Label(row_frame, text=label_text, font=("Segoe UI Semibold", 10), bg=CARD_BG, fg=TEXT_SUB, 
+                     width=25, anchor="w").grid(row=0, column=0, padx=(20, 10), pady=15)
+            
+            if widget_type == "entry":
+                ent = ttk.Entry(row_frame)
+                ent.grid(row=0, column=1, sticky='ew', padx=10)
+                if cmd:
+                    # Ghost Button style
+                    btn = tk.Button(row_frame, text="Update", command=cmd, bg=CARD_BG, fg=ACCENT_BLUE, 
+                                   relief="flat", font=("Segoe UI", 9, "bold"), padx=12, pady=3, 
+                                   cursor="hand2", activebackground=HOVER_GRAY, borderwidth=1, highlightbackground=BORDER_LIGHT)
+                    btn.grid(row=0, column=2, padx=(10, 20))
+                return ent
+            
+            elif widget_type == "check":
+                # Modern styled Checkbutton container
+                cb_frame = tk.Frame(row_frame, bg=CARD_BG)
+                cb_frame.grid(row=0, column=1, sticky='w', padx=10)
+                cb = ttk.Checkbutton(cb_frame, variable=var)
+                cb.pack(side="left")
+                if cmd:
+                    btn = tk.Button(row_frame, text="Update", command=cmd, bg=CARD_BG, fg=ACCENT_BLUE, 
+                                   relief="flat", font=("Segoe UI", 9, "bold"), padx=12, pady=3, cursor="hand2")
+                    btn.grid(row=0, column=2, padx=(10, 20))
+                return cb
 
-        # --- Email Notification Option ---
-        ttk.Label(general_group, text="Enable Email Notifications:").grid(row=2, column=0, padx=3, pady=4, sticky='w')
+        # ================= CARD: GENERAL SETTINGS =================
+        general_card = ttk.LabelFrame(settings_container, text=" General Settings ", padding=1)
+        general_card.pack(fill="x", pady=15)
+        
+        phone = add_setting_row(general_card, 0, "Emergency Contact", cmd=lambda: update_setting("phone"))
+        new_email = add_setting_row(general_card, 1, "System Alert Email", cmd=lambda: update_setting("new email"))
         email_notify_var = tk.BooleanVar()
-        email_notify_chk = ttk.Checkbutton(general_group, variable=email_notify_var)
-        email_notify_chk.grid(row=2, column=1, padx=3, pady=4, sticky='w')
-        ttk.Button(general_group, text="Save", width=10,
-                command=lambda: update_setting("email_notifications")).grid(row=2, column=2, padx=3, pady=4)
+        add_setting_row(general_card, 2, "Real-time Notifications", "check", lambda: update_setting("email_notifications"), email_notify_var)
 
-        # ================= RATE LIMITING SECTION =================
-        limit_group = ttk.LabelFrame(settings_container, text="Rate Limiting", padding=8)
-        limit_group.pack(fill="x", padx=8, pady=4)
-        limit_group.columnconfigure(1, weight=1)
-
-        ttk.Label(limit_group, text="Interval (min):").grid(row=0, column=0, padx=3, pady=4, sticky='w')
+        # ================= CARD: RATE LIMITING =================
+        limit_card = ttk.LabelFrame(settings_container, text=" Traffic Controls ", padding=1)
+        limit_card.pack(fill="x", pady=15)
+        
+        # Enhanced Traffic Rules Row
+        rules_row = tk.Frame(limit_card, bg=CARD_BG)
+        rules_row.grid(row=0, column=0, columnspan=3, sticky='ew', pady=1)
+        tk.Label(rules_row, text="Traffic Rules Engine", font=("Segoe UI Semibold", 10), bg=CARD_BG, fg=TEXT_SUB, width=25, anchor="w").pack(side="left", padx=(20, 10), pady=15)
+        
+        # Control group for comboboxes
+        ctrl_grp = tk.Frame(rules_row, bg=CARD_BG)
+        ctrl_grp.pack(side="left", fill="x", expand=True)
+        
+        tk.Label(ctrl_grp, text="Interval", bg=CARD_BG, fg=TEXT_SUB, font=("Segoe UI", 9)).pack(side="left", padx=5)
         interval_var = tk.StringVar()
-        interval_menu = ttk.Combobox(limit_group, textvariable=interval_var, width=10,
-                                    values=[1, 2, 3, 4, 5, 10, 30, 60, 120], state="readonly")
-        interval_menu.grid(row=0, column=1, padx=3, pady=4, sticky='w')
-
-        ttk.Label(limit_group, text="Requests/Interval:").grid(row=0, column=2, padx=3, pady=4, sticky='w')
+        int_cb = ttk.Combobox(ctrl_grp, textvariable=interval_var, values=[1,5,10,30,60], width=8, state="readonly")
+        int_cb.pack(side="left", padx=5)
+        
+        tk.Label(ctrl_grp, text="Requests", bg=CARD_BG, fg=TEXT_SUB, font=("Segoe UI", 9)).pack(side="left", padx=(15, 5))
         request_limit_var = tk.StringVar()
-        limit_menu = ttk.Combobox(limit_group, textvariable=request_limit_var, width=10,
-                                values=[10, 20, 30, 40, 50, 100, 300, 600, 1000], state="readonly")
-        limit_menu.grid(row=0, column=3, padx=3, pady=4, sticky='w')
-        ttk.Button(limit_group, text="Save", width=10, command=lambda: update_setting("rate_limit")).grid(row=0, column=4, padx=3, pady=4)
+        req_cb = ttk.Combobox(ctrl_grp, textvariable=request_limit_var, values=[10,50,100,500,1000], width=8, state="readonly")
+        req_cb.pack(side="left", padx=5)
+        
+        tk.Button(rules_row, text="APPLY POLICY", bg=ACCENT_BLUE, fg="white", relief="flat", 
+                  font=("Segoe UI", 9, "bold"), command=lambda: update_setting("max_requests_per_ip"), 
+                  padx=20, pady=5, cursor="hand2", activebackground="#005a9e").pack(side="right", padx=20)
 
-        ttk.Label(limit_group, text="Max Requests/IP:").grid(row=1, column=0, padx=3, pady=4, sticky='w')
-        max_requests_per_ip = ttk.Entry(limit_group, width=15)
-        max_requests_per_ip.grid(row=1, column=1, padx=3, pady=4, sticky='w')
-        ttk.Button(limit_group, text="Save", width=10, command=lambda: update_setting("max_requests_per_ip")).grid(row=1, column=4, padx=3, pady=4)
+        max_requests_per_ip = add_setting_row(limit_card, 1, "Max Global Requests/IP", cmd=lambda: update_setting("max_requests_per_ip"))
 
-        # ================= SECURITY SECTION =================
-        security_group = ttk.LabelFrame(settings_container, text="Security & Network", padding=8)
-        security_group.pack(fill="x", padx=8, pady=4)
-        security_group.columnconfigure(1, weight=1)
+        # ================= CARD: SECURITY =================
+        security_card = ttk.LabelFrame(settings_container, text=" Network Intelligence ", padding=1)
+        security_card.pack(fill="x", pady=15)
+        
+        honeypot_ips = add_setting_row(security_card, 0, "Honeypot IP Range", cmd=lambda: update_setting("honeypot_ips"))
+        folder_path = add_setting_row(security_card, 1, "Protected Directory", cmd=lambda: update_setting("sensitive folder"))
+        whitelist = add_setting_row(security_card, 2, "Permitted IP List", cmd=lambda: update_setting("whitelist"))
+        blacklist = add_setting_row(security_card, 3, "Restricted IP List", cmd=lambda: update_setting("blacklist"))
 
-        ttk.Label(security_group, text="Honeypot IPs:").grid(row=0, column=0, padx=3, pady=4, sticky='w')
-        honeypot_ips = ttk.Entry(security_group, width=40)
-        honeypot_ips.grid(row=0, column=1, padx=3, pady=4, sticky='ew')
-        ttk.Button(security_group, text="Save", width=10, command=lambda: update_setting("honeypot_ips")).grid(row=0, column=2, padx=3, pady=4)
+        # Load Logic (Kept as is)
+        data = fetch_settings_data()
+        if data:
+            fields = [phone, new_email, None, None, honeypot_ips, None, folder_path, whitelist, blacklist]
+            for i, field in enumerate(fields):
+                if field and i < len(data) and data[i]:
+                    field.delete(0, 'end'); field.insert(0, str(data[i]))
+            if data[2]: interval_var.set(data[2])
+            if data[9] is not None: email_notify_var.set(bool(data[9])) 
 
-        ttk.Label(security_group, text="Sensitive Folder:").grid(row=1, column=0, padx=3, pady=4, sticky='w')
-        folder_path = ttk.Entry(security_group, width=40)
-        folder_path.grid(row=1, column=1, padx=3, pady=4, sticky='ew')
-        ttk.Button(security_group, text="Save", width=10, command=lambda: update_setting("sensitive folder")).grid(row=1, column=2, padx=3, pady=4)
-
-        # ================= IP MANAGEMENT SECTION =================
-        ip_group = ttk.LabelFrame(settings_container, text="IP Management", padding=8)
-        ip_group.pack(fill="x", padx=8, pady=4)
-        ip_group.columnconfigure(1, weight=1)
-
-        ttk.Label(ip_group, text="Whitelist IPs:").grid(row=0, column=0, padx=3, pady=4, sticky='w')
-        whitelist = ttk.Entry(ip_group, width=40)
-        whitelist.grid(row=0, column=1, padx=3, pady=4, sticky='ew')
-        ttk.Button(ip_group, text="Save", width=10, command=lambda: update_setting("whitelist")).grid(row=0, column=2, padx=3, pady=4)
-
-        ttk.Label(ip_group, text="Blacklist IPs:").grid(row=1, column=0, padx=3, pady=4, sticky='w')
-        blacklist = ttk.Entry(ip_group, width=40)
-        blacklist.grid(row=1, column=1, padx=3, pady=4, sticky='ew')
-        ttk.Button(ip_group, text="Save", width=10, command=lambda: update_setting("blacklist")).grid(row=1, column=2, padx=3, pady=4)
-
-        # ================= LOAD PREVIOUS VALUES =================
-        result = fetch_settings_data()
-        prev_phone, prev_time_limit, prev_max_requests, prev_honeypots, prev_sensitive_folder, prev_email_notify = \
-            result[:6] if result else (None, None, None, None, None, False)
-
-        prev_hist = {
-            phone: prev_phone,
-            max_requests_per_ip: prev_max_requests,
-            honeypot_ips: prev_honeypots,
-            folder_path: prev_sensitive_folder
-        }
-
-        for widget, value in prev_hist.items():
-            if value is not None:
-                widget.insert(0, value)
-
-        if prev_email_notify:
-            email_notify_var.set(True)
-
-
-
+def fetch_settings_data():
+    try:
+        conn, cursor = db()
+        cursor.execute("""
+            SELECT
+                phone,
+                email,
+                request_time_limit,
+                max_requests_per_ip,
+                honeypot_ips,
+                allowed_ports,
+                sensitive_folders,
+                whitelisted_ips,
+                blacklisted_ips,
+                email_alerts_enabled
+            FROM settings
+            LIMIT 1
+        """)
+        data = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        return data
+    except Exception as e:
+        print("fetch_settings_data error:", e)
+        return None
 
 
 def update_setting(val):
-    global admin_user, email,form_container, admin_pass,phone, time_limit, honeypot_ips, folder_path, allowed_ports, port_services,whitelist,blacklist
-    global interval_var, request_limit_var,port,service,email_notify_var
-    dt=db()
-    connection=dt[0]
-    cursor=dt[1]
-    
-    if val=="sign in":
-            a=custom_askyesno("Admin Registration","Do you want to confirm it")
-            if a:
-                admin=admin_user.get()                
-                em=email.get()
-                pass_hs=hash_password(admin_pass.get())
-                query = """ INSERT INTO settings (admin_name,email,password_hash) VALUES (%s,%s,%s)"""
-                cursor.execute(query, (admin,em,pass_hs))
-                connection.commit()
-                
-                dashboardshow()
-                if form_container:
-                    form_container.destroy()
-                if image_container:
-                    image_container.destroy()
+    global admin_user, email, form_container, admin_pass, phone, time_limit
+    global honeypot_ips, folder_path, allowed_ports, port_services
+    global whitelist, blacklist, interval_var, request_limit_var
+    global port, service, email_notify_var, new_email, max_requests_per_ip
 
+    # ---------- REGEX PATTERNS ----------
+    USERNAME_REGEX = re.compile(r"^[a-zA-Z0-9_.-]{3,30}$")
+    EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+    PHONE_REGEX = re.compile(r"^[6-9]\d{9}$")
+    PASSWORD_REGEX = re.compile(
+        r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*#?&]).{8,}$"
+    )
+    PORTS_REGEX = re.compile(r"^(\d{1,5})(,\d{1,5})*$")
+    PATH_REGEX = re.compile(r"^[a-zA-Z0-9_\/\\\:\.-]+$")
 
-                validate_user=True    
-    if val=="phone":
-            print("yess")
-            query = """ UPDATE settings SET phone = %s  """
-            cursor.execute(query, (phone.get(),))
-            connection.commit()
-            #adding here the button successful or error message
-    if val=="port_info":
-            jsonins("port",port.get(),service.get())
+    IPV4_REGEX = re.compile(
+        r"^((25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
+        r"(25[0-5]|2[0-4]\d|[01]?\d\d?)$"
+    )
+    IPV6_REGEX = re.compile(r"^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$")
 
-    if val=="request_time_limit":
-            query = """ UPDATE settings SET request_time_limit = %s  """
-            cursor.execute(query, (time_limit.get(),))
-            connection.commit()
-    if val=="max_requests_per_ip":
-            jsonins("rqpt",interval_var.get(),request_limit_var.get())
+    dt = db()
+    connection = dt[0]
+    cursor = dt[1]
 
-    if val=="max_requests_per_ip_per_time":
-            jsonins("rqpt",interval_var,request_limit_var)
-
-    if val=="honeypot_ips":
-            ins_honey(honeypot_ips.get())
-    
-    if val=="sensitive folder":
-            query = """ UPDATE settings SET sensitive_folders= %s """
-            cursor.execute(query, (folder_path.get(),))
-            connection.commit()
-    if val=="allowed_port":
-        
-        ports_raw = allowed_ports.get().strip()
-    
-        # Convert to valid JSON (example: "80,443,22" → [80, 443, 22])
-        ports_list = [int(p.strip()) for p in ports_raw.split(",") if p.strip().isdigit()]
-        ports_json = json.dumps(ports_list)
-
-        query = "UPDATE settings SET allowed_ports = %s"
-        cursor.execute(query, (ports_json,))
-        connection.commit()
-
-        messagebox.showinfo("Success", "Allowed ports updated successfully!")
-
-
-    if val=="new email":
-        
-        query = """ UPDATE settings SET email = %s """
-        cursor.execute(query, (new_email.get(),))
-        connection.commit()
-
-    if val=="sensative_folder":
-        
-        query = """ UPDATE settings SET sensitive_folders = %s """
-        cursor.execute(query, (sensative_folder.get(),))
-        connection.commit()
-
-    if val=="email_notifications":
-        query = """ UPDATE settings SET email_alerts_enabled = %s """
-        cursor.execute(query, (email_notify_var.get(),))
-        connection.commit()
-
-    if val=="max_requests_per_ip":
-        query = """ UPDATE settings SET request_time_limit = %s """
-        cursor.execute(query, (max_requests_per_ip.get(),))
-        connection.commit()
-    if val in ["whitelist", "blacklist"]:
-        IPS_ob = IPS
-
-        # Get user-entered IP (from correct widget)
-        ip_value = (whitelist.get() if val == "whitelist" else blacklist.get()).strip()
-
-        if not ip_value:
-            messagebox.showwarning("Input Error", "Please enter an IP address.")
+    # ================= ADMIN SIGN-UP =================
+    if val == "sign in":
+        a = custom_askyesno("Admin Registration", "Do you want to confirm it")
+        if not a:
             return
-        normalized_ip = IPS.normalize_ip(ip_value)
 
-        if not normalized_ip:
+        admin = admin_user.get().strip()
+        em = email.get().strip()
+        pwd = admin_pass.get()
+
+        if not USERNAME_REGEX.match(admin):
+            messagebox.showerror("Invalid Username",
+                                 "Username must be 3–30 chars (letters, numbers, _, ., -)")
+            return
+
+        if not EMAIL_REGEX.match(em):
+            messagebox.showerror("Invalid Email", "Enter a valid email address.")
+            return
+
+        if not PASSWORD_REGEX.match(pwd):
             messagebox.showerror(
-                "Invalid IP",
-                "Please enter a valid IPv4 or IPv6 address."
+                "Weak Password",
+                "Password must contain:\n• 8+ chars\n• Uppercase\n• Lowercase\n• Number\n• Special character"
             )
             return
 
-      
+        pass_hs = hash_password(pwd)
+        cursor.execute(
+            "INSERT INTO settings (admin_name,email,password_hash) VALUES (%s,%s,%s)",
+            (admin, em, pass_hs)
+        )
+        connection.commit()
+
+        dashboardshow()
+        if form_container:
+            form_container.destroy()
+        if image_container:
+            image_container.destroy()
+
+        validate_user = True
+        return
+
+    # ================= PHONE =================
+    if val == "phone":
+        phone_val = phone.get().strip()
+        if not PHONE_REGEX.match(phone_val):
+            messagebox.showerror("Invalid Phone", "Enter a valid 10-digit mobile number.")
+            return
+
+        cursor.execute("UPDATE settings SET phone = %s", (phone_val,))
+        connection.commit()
+        return
+
+    # ================= EMAIL =================
+    if val == "new email":
+        email_val = new_email.get().strip()
+        if not EMAIL_REGEX.match(email_val):
+            messagebox.showerror("Invalid Email", "Enter a valid email address.")
+            return
+
+        cursor.execute("UPDATE settings SET email = %s", (email_val,))
+        connection.commit()
+        return
+
+    # ================= RATE LIMIT =================
+    if val == "max_requests_per_ip":
+        interval = interval_var.get()
+        limit = request_limit_var.get()
+
+        if not interval.isdigit() or not limit.isdigit():
+            messagebox.showerror("Invalid Input", "Interval and limit must be numbers.")
+            return
+
+        jsonins("rqpt", interval, limit)
+        return
+
+    # ================= HONEYPOT =================
+    if val == "honeypot_ips":
+        ip_val = honeypot_ips.get().strip()
+        if not (IPV4_REGEX.match(ip_val) or IPV6_REGEX.match(ip_val)):
+            messagebox.showerror("Invalid IP", "Enter valid IPv4 or IPv6 address.")
+            return
+
+        ins_honey(ip_val)
+        return
+
+    # ================= SENSITIVE FOLDER =================
+    if val == "sensitive folder":
+        path = folder_path.get().strip()
+        if not PATH_REGEX.match(path):
+            messagebox.showerror("Invalid Path", "Invalid folder path.")
+            return
+
+        cursor.execute("UPDATE settings SET sensitive_folders = %s", (path,))
+        connection.commit()
+        return
+
+    # ================= ALLOWED PORTS =================
+    if val == "allowed_port":
+        ports_raw = allowed_ports.get().strip()
+        if not PORTS_REGEX.match(ports_raw):
+            messagebox.showerror("Invalid Ports", "Use format: 80,443,22")
+            return
+
+        ports = []
+        for p in ports_raw.split(","):
+            p = int(p)
+            if not (1 <= p <= 65535):
+                messagebox.showerror("Invalid Port", f"Port {p} out of range.")
+                return
+            ports.append(p)
+
+        cursor.execute(
+            "UPDATE settings SET allowed_ports = %s",
+            (json.dumps(ports),)
+        )
+        connection.commit()
+        messagebox.showinfo("Success", "Allowed ports updated.")
+        return
+
+    # ================= EMAIL NOTIFICATION =================
+    if val == "email_notifications":
+        cursor.execute(
+            "UPDATE settings SET email_alerts_enabled = %s",
+            (email_notify_var.get(),)
+        )
+        connection.commit()
+        return
+
+    # ================= WHITELIST / BLACKLIST =================
+    if val in ["whitelist", "blacklist"]:
+        ip_value = (whitelist.get() if val == "whitelist" else blacklist.get()).strip()
+
+        if not (IPV4_REGEX.match(ip_value) or IPV6_REGEX.match(ip_value)):
+            messagebox.showerror("Invalid IP", "Enter valid IPv4 or IPv6.")
+            return
+
+        IPS_ob = IPS
         all_whitelist = IPS_ob.whitelist_ip("all")
         all_blacklist = IPS_ob.blacklist_ip("all")
-        print(all_whitelist,"<-whitlist")
-        print(all_blacklist,"<-blacklist")
-     
 
-        if ip_value in all_whitelist:
-            messagebox.showerror("Not Allowed", f"{ip_value} already exists in Whitelist.")
+        if ip_value in all_whitelist or ip_value in all_blacklist:
+            messagebox.showerror("Duplicate", "IP already exists.")
             return
-
-        if ip_value in all_blacklist:
-            messagebox.showerror("Not Allowed", f"{ip_value} already exists in Blacklist.")
-            return
-
 
         if val == "whitelist":
             IPS_ob.whitelist_ip("add", ip_value)
-            messagebox.showinfo("Success", f"{ip_value} added to Whitelist.")
-            return
-
-        if val == "blacklist":
+            messagebox.showinfo("Success", "IP added to Whitelist.")
+        else:
             IPS_ob.blacklist_ip("add", ip_value)
-            messagebox.showinfo("Success", f"{ip_value} added to Blacklist.")
-            return
-        
-    
+            messagebox.showinfo("Success", "IP added to Blacklist.")
+
+
+
+
 def dashboardshow():
-    sidebar.pack()
-    global connection,cursor
+    sidebar.pack(side="left", fill="y")
+    global connection, cursor
+
+    # Clear existing widgets
     for widget in content_frame.winfo_children():
         widget.destroy()
-    tk.Label(content_frame, text="DASHBOARD", font=("Arial", 18)).pack(pady=10)
-    database=db()
-    connection=database[0]
-    cursor=database[1]
-    cursor.execute("SELECT admin_name FROM settings")
-    results = cursor.fetchall()
-    show_bar_chart_by_country()
+
+    # --- UI THEME COLORS ---
+    BG_MAIN = "#f4f7f6"
+    ACCENT_COLOR = "#2c3e50"
+    ALERT_RED = "#e74c3c"
+    CARD_BG = "#ffffff"
+    ACCENT_BLUE = "#3498db"
+    
+    content_frame.configure(bg=BG_MAIN)
+
+    # ---------------- 1. HEADER SECTION ----------------
+    header_frame = tk.Frame(content_frame, bg=BG_MAIN)
+    header_frame.pack(fill="x", padx=30, pady=(20, 10))
+
+    tk.Label(
+        header_frame,
+        text="Security Command Center",
+        font=("Segoe UI", 24, "bold"),
+        fg=ACCENT_COLOR,
+        bg=BG_MAIN
+    ).pack(side="left")
+
+    # ---------------- 2. CRITICAL ALERTS (TOP PRIORITY) ----------------
+    # High-visibility container for active threats
+    alerts_container = tk.LabelFrame(
+        content_frame, 
+        text=" 🚨 ACTIVE SECURITY THREATS ", 
+        font=("Segoe UI", 11, "bold"),
+        fg=ALERT_RED,
+        bg=CARD_BG,
+        padx=15,
+        pady=15,
+        relief="flat",
+        highlightbackground="#dcdde1",
+        highlightthickness=1
+    )
+    alerts_container.pack(fill="x", padx=30, pady=10)
+
+    # Treeview Style for Alerts
+    style = ttk.Style()
+    style.theme_use("clam")
+    style.configure("Alert.Treeview", rowheight=30, font=("Segoe UI", 9))
+    style.configure("Alert.Treeview.Heading", font=("Segoe UI", 10, "bold"), background="#fdf2f2")
+
+    columns_alert = ("attack_type", "src_ip", "severity", "hit_count", "last_detected")
+    alert_tree = ttk.Treeview(alerts_container, columns=columns_alert, show="headings", height=4, style="Alert.Treeview")
+    
+    alert_tree.heading("attack_type", text="Attack Type")
+    alert_tree.heading("src_ip", text="Source IP")
+    alert_tree.heading("severity", text="Severity")
+    alert_tree.heading("hit_count", text="Hits")
+    alert_tree.heading("last_detected", text="Last Detected")
+
+    # Column Formatting
+    alert_tree.column("severity", width=100, anchor="center")
+    alert_tree.column("hit_count", width=80, anchor="center")
+
+    # Severity Tags
+    alert_tree.tag_configure("HIGH", background="#ffcccc", foreground="#900")
+    alert_tree.tag_configure("MEDIUM", background="#ffe0b3")
+    alert_tree.tag_configure("LOW", background="#d4edda")
+
+    # Fetch and Insert Alert Data
+    try:
+        database = db()
+        conn, cur = database[0], database[1]
+        cur.execute("""
+            SELECT attack_type, src_ip, severity, hit_count, last_detected 
+            FROM attack_state WHERE is_active = 1 
+            ORDER BY FIELD(severity, 'HIGH', 'MEDIUM', 'LOW'), last_detected DESC
+        """)
+        for row in cur.fetchall():
+            alert_tree.insert("", "end", values=row, tags=(row[2],))
+    except Exception as e:
+        tk.Label(alerts_container, text=f"Update Error: {e}", bg=CARD_BG, fg="red").pack()
+
+    alert_tree.pack(fill="x", expand=True)
+
+    # ---------------- 3. ANALYTICS SECTION (VISUALS & LOGS) ----------------
+    # A subtle title to separate the data
+    tk.Label(
+        content_frame, 
+        text="Geographic Traffic Analysis", 
+        font=("Segoe UI", 14, "bold"),
+        fg=ACCENT_COLOR,
+        bg=BG_MAIN
+    ).pack(anchor="w", padx=30, pady=(20, 5))
+
+    # We call the modified chart function and pass the content_frame
+    show_bar_chart_by_country_integrated()
+
+    # ---------------- LOGIC & THREADS ----------------
     thread = threading.Thread(target=update_null_countries, args=(connection, cursor))
-    thread.daemon = True # This ensures the thread exits when the main program does
+    thread.daemon = True
     thread.start()
+
     global refresh_jobs
-    job_id = root.after(10000, lambda: data_to_show("Dashboard"))
+    job_id = root.after(SECUREGATE_GUI_REFRESH_INTERVAL * 1000, lambda: data_to_show("Dashboard"))
     refresh_jobs.append(job_id)
+
+def show_bar_chart_by_country_integrated():
+    # Colors for Chart
+    BG_MAIN = "#f4f7f6"
+    CARD_BG = "#ffffff"
+    RED_CHART = "#e74c3c"
+    GREEN_CHART = "#2ecc71"
+    ACCENT_BLUE = "#3498db"
+
+    blocked = fetch_ips("blocked") or []
+    unblocked = fetch_ips("unblocked") or []
+
+    # Data Processing
+    blocked_counts = collections.defaultdict(int)
+    for ip, country in blocked:
+        name = str(country).strip() if country and str(country).strip() != "" else "Unknown"
+        blocked_counts[name] += 1
+
+    unblocked_counts = collections.defaultdict(int)
+    for ip, country in unblocked:
+        name = str(country).strip() if country and str(country).strip() != "" else "Unknown"
+        unblocked_counts[name] += 1
+
+    all_countries = sorted(list(set(blocked_counts.keys()) | set(unblocked_counts.keys())))
+
+    if not all_countries:
+        tk.Label(content_frame, text="No Data Available", bg=BG_MAIN).pack(pady=20)
+        return
+
+    # --- CHART CARD ---
+    chart_card = tk.Frame(content_frame, bg="white", highlightbackground="#dcdde1", highlightthickness=1)
+    chart_card.pack(fill="x", padx=30, pady=10)
+
+    plt.style.use('ggplot')
+    fig, ax = plt.subplots(figsize=(10, 4), dpi=100)
+    fig.patch.set_facecolor('white')
+    ax.set_facecolor('white')
+
+    width = 0.35
+    x = range(len(all_countries))
+
+    ax.bar(x, [blocked_counts.get(c, 0) for c in all_countries], width, 
+           label='Blocked', color=RED_CHART, edgecolor='white', linewidth=0.5)
+    ax.bar([i + width for i in x], [unblocked_counts.get(c, 0) for c in all_countries], width, 
+           label='Unblocked', color=GREEN_CHART, edgecolor='white', linewidth=0.5)
+
+    ax.set_ylabel('Total IPs', fontname='Segoe UI', fontweight='bold', alpha=0.6)
+    ax.set_xticks([i + width / 2 for i in x])
+    ax.set_xticklabels(all_countries, rotation=25, ha='right', fontsize=8)
+    ax.legend(frameon=False)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    fig.tight_layout()
+
+    canvas = FigureCanvasTkAgg(fig, master=chart_card)
+    canvas.draw()
+    canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
+
+    # --- DATA TABLE CARD ---
+    table_frame = tk.Frame(content_frame, bg=BG_MAIN)
+    table_frame.pack(fill='both', expand=True, padx=30, pady=(10, 20))
+
+    # Table Style
+    style = ttk.Style()
+    style.configure("Table.Treeview", background=CARD_BG, rowheight=28, font=("Segoe UI", 9))
+    style.configure("Table.Treeview.Heading", background="#ecf0f1", font=("Segoe UI", 10, "bold"))
+
+    columns = ('country', 'blocked', 'unblocked')
+    tree = ttk.Treeview(table_frame, columns=columns, show='headings', style="Table.Treeview")
+
+    tree.heading('country', text='  COUNTRY')
+    tree.column('country', anchor='w', width=200)
+    tree.heading('blocked', text='  BLOCKED')
+    tree.column('blocked', anchor='center', width=100)
+    tree.heading('unblocked', text='  UNBLOCKED')
+    tree.column('unblocked', anchor='center', width=100)
+
+    for i, country in enumerate(all_countries):
+        tag = 'even' if i % 2 == 0 else 'odd'
+        tree.insert('', 'end', values=(f" {country}", blocked_counts.get(country, 0), unblocked_counts.get(country, 0)), tags=(tag,))
+
+    tree.tag_configure('odd', background='#f9f9f9')
+    tree.tag_configure('even', background='#ffffff')
+
+    scrollbar = ttk.Scrollbar(table_frame, orient='vertical', command=tree.yview)
+    tree.configure(yscrollcommand=scrollbar.set)
+    scrollbar.pack(side='right', fill='y')
+    tree.pack(side='left', fill='both', expand=True)
+
+
 def connect_db():
     return mysql.connector.connect(
-        host="localhost",
-        user="root",
-        password="",
-        database="securegate"
-         ,autocommit=True  
+       host=SECUREGATE_DB_HOST,
+    user=SECUREGATE_DB_USER,
+    password=SECUREGATE_DB_PASS,
+    database=SECUREGATE_DB_NAME,
+    port=SECUREGATE_DB_PORT,
+    autocommit=True
     )
 
 def datamanage(page):
-    if page=="Dashboard":
-        return ["Dashboard"]
-    if page =="IP Monitor":
-       return ["IP","ip address"," request time","count of occur","blocked","local ip","block time","country","recent request"] 
-    elif page=="Logs":
-       return ["iprequest_junction","id","ip address","port number","protocol"," request time"] 
-    elif page=="Port Monitor":
-        return ["request_type","port","service","request_count"," request time","last seen"]
-    elif page=="Protocol Monitor":
-        return ["Network_protocol","protocol","request_count"," first seen","last seen"]
-    elif page=="blocked IP":
-        return ["blocked IP","blocked ip","request_time","islocal","block interval"]
-    elif page=="Setting":
-        return ["Setting"]
-    else:
-        return []
+    # This now only returns the Table Name. 
+    # Columns are handled automatically in the thread.
+    mapping = {
+        "IP Monitor": "ip",
+        "Logs": "iprequest_junction",
+        "Port Monitor": "request_type",
+        "Protocol Monitor": "Network_protocol",
+        "blocked IP": "ip" # We filter this in the query usually
+    }
+    return mapping.get(page, page)
+
 def blockdatashow():
     database = db()
     conn=database[0]
@@ -826,71 +1049,87 @@ def blockdatashow():
 
 import threading
 
-def fetch_data_in_thread(page_name):
-    global columns
-    """Function to be run in a separate thread to fetch data."""
+def update_gui_with_data(fetched_rows, cols, page_name, reset_pagination=True):
+    global all_rows, columns, APP_STATE
+    
+    if fetched_rows == "dashboard":
+        APP_STATE["current_view"] = "dashboard"
+        dashboardshow()
+        return
+    elif fetched_rows == "settings":
+        APP_STATE["current_view"] = "settings"
+        settingshow(3)
+        return
+
+    # Update Data
+    all_rows = fetched_rows if fetched_rows is not None else []
+    columns = cols
+    
+    # THE STATE FIX: Only reset to page 0 if it's a NEW click, not a refresh
+    if reset_pagination:
+        APP_STATE["current_page"] = 0
+    
+    APP_STATE["current_view"] = "data_logs"
+    APP_STATE["last_page_name"] = page_name # Remember WHICH table we are on
+    
+    show_page_data()
+    
+    # Schedule next refresh
+    if page_name != "Setting":
+        clear_all_jobs() # Prevent timer stacking
+        job_id = root.after(SECUREGATE_GUI_REFRESH_INTERVAL * 1000, lambda: data_to_show(page_name, False)) # False = Don't reset page
+        refresh_jobs.append(job_id)
+
+def data_to_show(page_name, reset_pagination=True):
+    """Main function called by button clicks (True) and refresh (False)."""
+    thread = threading.Thread(target=fetch_data_in_thread, args=(page_name, reset_pagination))
+    thread.daemon = True
+    thread.start()
+def fetch_data_in_thread(page_name, reset_pagination):
     try:
         conn = connect_db()
         cursor = conn.cursor()
         
-        table_info = datamanage(page_name)
+        # 1. Map page names to actual DB table names
+        table_mapping = {
+            "IP Monitor": "ip",
+            "Logs": "iprequest_junction",
+            "Port Monitor": "request_type",
+            "Protocol Monitor": "Network_protocol",
+            "blocked IP": "blocked_ip_view" # Or whatever your blocked logic table is
+        }
+
         fetched_rows = None
-        if table_info:
-            table_name = table_info[0]
-            if table_name == "blocked IP":
-                fetched_rows = blockdatashow()
-            elif table_name == "Dashboard":
-                fetched_rows = "dashboard" # Special signal
-            elif table_name == "Setting":
-                fetched_rows = "settings" # Special signal
-            else:
-                cursor.execute(f"SELECT * FROM {table_name}")
+        dynamic_cols = []
+
+        if page_name == "Dashboard":
+            fetched_rows = "dashboard"
+        elif page_name == "Setting":
+            fetched_rows = "settings"
+        else:
+            # Get the table name from our mapping
+            db_table = table_mapping.get(page_name)
+            
+            if db_table:
+                # 2. Execute a dynamic query
+                cursor.execute(f"SELECT * FROM {db_table}")
+                
+                # 3. DYNAMICALLY EXTRACT COLUMN NAMES
+                # cursor.description returns a tuple for each column; 
+                # index 0 is always the column name.
+                dynamic_cols = [desc[0].replace("_", " ").title() for desc in cursor.description]
+                
                 fetched_rows = cursor.fetchall()
+
+        # Pass the dynamically discovered columns to the GUI
+        root.after(0, lambda: update_gui_with_data(fetched_rows, dynamic_cols, page_name, reset_pagination))
         
-        root.after(0, lambda: update_gui_with_data(fetched_rows,table_info[1:], page_name))
-        
-        if conn and conn.is_connected():
+        if conn.is_connected():
             cursor.close()
             conn.close()
+            
     except Exception as e:
-        print(f"Error in data fetching thread: {e}")
-
-def update_gui_with_data(fetched_rows, cols, page_name):
-    global columns
-    """Function to safely update the GUI with fetched data."""
-    global all_rows, columns, current_page
-    
-    if fetched_rows == "dashboard":
-        dashboardshow()
-        return
-    elif fetched_rows == "settings":
-        settingshow(3)
-        return
-
-    all_rows = fetched_rows if fetched_rows is not None else []
-    columns = cols
-    current_page = 0
-    show_page_data()
-    
-    if page_name != "Setting":
-        global refresh_jobs
-        job_id = root.after(10000, lambda: data_to_show(page_name))
-        refresh_jobs.append(job_id)
-
-def data_to_show(page_name):
-    """Main function called by button clicks."""
-    global validate_user
-    
-    clear_all_jobs()
-    
-    thread = threading.Thread(target=fetch_data_in_thread, args=(page_name,))
-    thread.daemon = True
-    thread.start()
-
-
-
-
-
+        print(f"Dynamic Fetch Error: {e}")
 
 
 
@@ -913,15 +1152,10 @@ def prev_page():
 
 
 
-
-def show_page(page_name):
-        # Clear previous content
-        for widget in content_frame.winfo_children():
-            widget.destroy()
-
-        label = tk.Label(content_frame, text=f"{page_name} Page", font=("Arial", 18), bg="white")
-        label.pack(pady=20)
-        
+def change_page(delta):
+    """Changes page while strictly preserving state."""
+    APP_STATE["current_page"] += delta
+    show_page_data() # Reloads with new page index
 
 try:
     from ttkthemes import ThemedTk
@@ -934,12 +1168,14 @@ except ImportError:
 
 root.title("SecureGate Network Monitor")
 try:
-    root.iconbitmap("securegate_image.ico")
+    if SECUREGATE_GUI_ICON and os.path.exists(SECUREGATE_GUI_ICON):
+        root.iconbitmap(SECUREGATE_GUI_ICON)
 except tk.TclError:
-    print("Icon not found. Skipping.")
+        print("Icon not found. Skipping.")
 
-INITIAL_WIDTH = 1100
-INITIAL_HEIGHT = 700
+INITIAL_WIDTH = SECUREGATE_GUI_WIDTH
+INITIAL_HEIGHT = SECUREGATE_GUI_HEIGHT
+
 root.geometry(f"{INITIAL_WIDTH}x{INITIAL_HEIGHT}")
 root.minsize(800, 600)
 
@@ -998,84 +1234,157 @@ def handle_button_click(n):
 
             data_to_show(n) 
 
+
+def on_enter(e):
+    e.widget['background'] = "#4a6572" # Lighter slate
+
+def on_leave(e):
+    e.widget['background'] = "#34495e" # Original slate
+
 for name in pages:
     btn = tk.Button(
-    sidebar,
-    text=name,
-    fg="white",
-    bg="#34495e", # Original color
-    font=("Arial", 12),
-    relief="flat",
-    activebackground="#4a6572", # Color when button is clicked
-    activeforeground="white",
-    command=partial(handle_button_click, name)
-)
-    btn.pack(fill="x", pady=2)
-
+        sidebar,
+        text=f"  {name}", # Spacing for icon feel
+        anchor="w",       # Align text to left
+        fg="white",
+        bg="#34495e",
+        font=("Segoe UI", 11),
+        relief="flat",
+        padx=20,
+        pady=10,
+        activebackground="#1abc9c", # Turquoise accent on click
+        activeforeground="white",
+        command=partial(handle_button_click, name)
+    )
+    btn.pack(fill="x", pady=1)
+    btn.bind("<Enter>", on_enter)
+    btn.bind("<Leave>", on_leave)
 
 
 settingshow(2)
-def show_page_data():
-    global all_rows, columns, current_page
+# Initialize these at the top of your script if not already done
+current_page = 0
+rows_per_page = SECUREGATE_GUI_ROWS_PER_PAGE
 
+
+def show_page_data(preserve_state=True):
+    """
+    preserve_state: If True, stays on the current page. 
+                    If False, resets to page 0 (useful for new searches).
+    """
+    global all_rows, columns, current_page, rows_per_page
+
+    # --- UI THEME COLORS ---
+    BG_MAIN = "#f4f7f6"
+    CARD_BG = "#ffffff"
+    ACCENT_BLUE = "#3498db"
+    TEXT_COLOR = "#2c3e50"
+
+    # 1. State Preservation Logic
+    if not preserve_state:
+        current_page = 0
+
+    # Safety check: ensure current_page isn't out of bounds after a data change
+    total_rows = len(all_rows)
+    max_pages = max(0, (total_rows - 1) // rows_per_page)
+    if current_page > max_pages:
+        current_page = max_pages
+
+    # Calculate pagination slice
     start = current_page * rows_per_page
     end = start + rows_per_page
     rows = all_rows[start:end]
 
+    # Clear content_frame
     for widget in content_frame.winfo_children():
         widget.destroy()
+    
+    content_frame.configure(bg=BG_MAIN)
+
+    # --- HEADER ---
+    header_frame = tk.Frame(content_frame, bg=BG_MAIN)
+    header_frame.pack(fill="x", padx=30, pady=(20, 10))
+    
+    tk.Label(
+        header_frame, 
+        text=f"Network Data Logs", 
+        font=("Segoe UI", 18, "bold"),
+        fg=TEXT_COLOR, bg=BG_MAIN
+    ).pack(side="left")
+
+    # --- TABLE CONTAINER ---
+    table_container = tk.Frame(content_frame, bg=CARD_BG, highlightbackground="#dcdde1", highlightthickness=1)
+    table_container.pack(fill="both", expand=True, padx=30, pady=10)
+
+    # --- STYLE ---
     style = ttk.Style()
-    style.configure("Treeview.Heading", font=("Arial", 11, "bold"))
-    style.configure("Treeview", rowheight=28, font=("Arial", 10))
-
-    # Create the Treeview widget (the table)
-    tree = ttk.Treeview(content_frame, columns=columns, show='headings')
-
+    style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
+    style.configure("Treeview", rowheight=32, font=("Segoe UI", 10))
 
     if not rows:
-        no_data_label = ttk.Label(
-        content_frame, 
-        text="No Data Found Here",
-        font=("Arial", 18),
-        foreground="gray" # Use a muted color for the text
-    )
-        no_data_label.pack(expand=True)
+        no_data_frame = tk.Frame(table_container, bg=CARD_BG)
+        no_data_frame.pack(expand=True)
+        tk.Label(no_data_frame, text="No Data Available", font=("Segoe UI", 12), fg="gray", bg=CARD_BG).pack()
     else:
+        tree = ttk.Treeview(table_container, columns=columns, show='headings')
         for col in columns:
-            tree.heading(col, text=col)
-            tree.column(col, anchor="center", width=120)
+            tree.heading(col, text=f" {col.upper()}")
+            tree.column(col, anchor="w", width=120)
 
-        tree.tag_configure('oddrow', background='#f0f0f0') # Light gray for odd rows
-        tree.tag_configure('evenrow', background='white')   # White for even rows
+        tree.tag_configure('oddrow', background='#f9f9f9')
+        tree.tag_configure('evenrow', background='white')
 
         for row_index, row in enumerate(rows):
             processed_row = [cell if cell not in [None, 0, "None"] else '-' for cell in row]
-            if row_index % 2 == 0:
-                tree.insert('', 'end', values=processed_row, tags=('evenrow',))
-            else:
-                tree.insert('', 'end', values=processed_row, tags=('oddrow',))
+            tag = 'evenrow' if row_index % 2 == 0 else 'oddrow'
+            tree.insert('', 'end', values=processed_row, tags=(tag,))
 
-        # Place the Treeview in the grid and make it expandable
-        tree.grid(row=0, column=0, sticky="nsew")
-        content_frame.grid_rowconfigure(0, weight=1)
-        content_frame.grid_columnconfigure(0, weight=1)
-
-        scrollbar = ttk.Scrollbar(content_frame, orient="vertical", command=tree.yview)
+        scrollbar = ttk.Scrollbar(table_container, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=scrollbar.set)
-        scrollbar.grid(row=0, column=1, sticky="ns")
-        if len(columns) == 0:
-            span = 1
-        else:
-            span = len(columns)
-            
-        nav = tk.Frame(content_frame)
-        nav.grid(row=len(rows) + 1, columnspan=span, pady=10)
+        tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
 
-        if current_page>0:
-            tk.Button(nav, text="Previous", command=prev_page).pack(side="left", padx=1)
-        if end<len(all_rows):
-            tk.Button(nav,text="Next", command=next_page).pack(side="left", padx=1)
+    # --- PERSISTENT NAVIGATION BAR ---
+    nav_bar = tk.Frame(content_frame, bg=BG_MAIN)
+    nav_bar.pack(fill="x", side="bottom", padx=30, pady=20)
 
+    def create_nav_btn(parent, text, cmd, side):
+        btn = tk.Button(
+            parent, text=text, command=cmd, 
+            font=("Segoe UI", 9, "bold"), bg=CARD_BG, fg=ACCENT_BLUE,
+            relief="flat", highlightbackground=ACCENT_BLUE, highlightthickness=1,
+            padx=15, pady=5, cursor="hand2"
+        )
+        btn.pack(side=side, padx=5)
+        return btn
+
+    # Pagination buttons only show if applicable
+    if end < total_rows:
+        create_nav_btn(nav_bar, "Next Page →", next_page, "right")
+    
+    if current_page > 0:
+        create_nav_btn(nav_bar, "← Previous Page", prev_page, "left")
+
+    # The "State Indicator"
+    current_range = f"{start + 1}-{min(end, total_rows)}" if total_rows > 0 else "0-0"
+    tk.Label(
+        nav_bar, 
+        text=f"Page {current_page + 1}  |  Showing {current_range} of {total_rows}",
+        font=("Segoe UI", 9), fg="#7f8c8d", bg=BG_MAIN
+    ).pack(side="left", expand=True)
+
+# ---------------------------------------------------------
+# GLOBAL NAVIGATION FUNCTIONS (Maintain State)
+# ---------------------------------------------------------
+def next_page():
+    global current_page
+    current_page += 1
+    show_page_data(preserve_state=True)
+
+def prev_page():
+    global current_page
+    current_page -= 1
+    show_page_data(preserve_state=True)
 
 
 root.mainloop()
