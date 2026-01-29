@@ -10,7 +10,71 @@ import json
 from tkinter import ttk
 from PIL import Image, ImageTk
 
-from securegate_new import *
+
+
+
+
+# ==================================================
+# SecureGate GUI – Environment Loader (SAFE)
+# ==================================================
+
+import os
+from dotenv import load_dotenv
+
+# Resolve base directory safely (works when launched from installer / service)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+ENV_FILE = os.path.join(BASE_DIR, "securegate.env")
+
+# Load .env with override (CRITICAL)
+load_dotenv(ENV_FILE, override=True)
+
+# -------------------------------
+# DATABASE CONFIG
+# -------------------------------
+SECUREGATE_DB_HOST = os.getenv("SECUREGATE_DB_HOST", "localhost")
+SECUREGATE_DB_PORT = int(os.getenv("SECUREGATE_DB_PORT", "3306"))
+SECUREGATE_DB_USER = os.getenv("SECUREGATE_DB_USER", "root")
+SECUREGATE_DB_PASS = os.getenv("SECUREGATE_DB_PASS", "")
+SECUREGATE_DB_NAME = os.getenv("SECUREGATE_DB_NAME", "securegate")
+
+# -------------------------------
+# GUI CONFIG
+# -------------------------------
+SECUREGATE_GUI_REFRESH_INTERVAL = int(
+    os.getenv("SECUREGATE_GUI_REFRESH_INTERVAL", "10")
+)
+
+SECUREGATE_GUI_ROWS_PER_PAGE = int(
+    os.getenv("SECUREGATE_GUI_ROWS_PER_PAGE", "15")
+)
+
+SECUREGATE_GUI_WIDTH = int(
+    os.getenv("SECUREGATE_GUI_WIDTH", "1100")
+)
+
+SECUREGATE_GUI_HEIGHT = int(
+    os.getenv("SECUREGATE_GUI_HEIGHT", "700")
+)
+
+SECUREGATE_GUI_ICON = os.getenv(
+    "SECUREGATE_GUI_ICON", "securegate_image.ico"
+)
+
+# -------------------------------
+# NETWORK / API CONFIG
+# -------------------------------
+SECUREGATE_GEOIP_API = os.getenv(
+    "SECUREGATE_GEOIP_API", "http://ip-api.com/json"
+)
+
+
+
+
+
+
+
+
 RUN_ENGINE=False
 validate_user=False
 current_page = 0
@@ -30,8 +94,6 @@ APP_STATE = {
 }
 
 
-
-#global connection,cursor
 
 refresh_jobs = []  # List to store job IDs
 def global_refresh_job():
@@ -64,21 +126,31 @@ def clear_all_jobs():
     refresh_jobs.clear()
 def db():
     try:
-        global connection,cursor
-        connection = mysql.connector.connect(
-        host=SECUREGATE_DB_HOST,
-        user=SECUREGATE_DB_USER,
-        password=SECUREGATE_DB_PASS,
-        database=SECUREGATE_DB_NAME,
-        port=SECUREGATE_DB_PORT,
-        autocommit=True)
+        # 🔁 ALWAYS reload env (critical)
+        load_dotenv(ENV_FILE, override=True)
 
-        cursor = connection.cursor()
-        return (connection,cursor)
+        host = os.getenv("SECUREGATE_DB_HOST")
+        user = os.getenv("SECUREGATE_DB_USER")
+        password = os.getenv("SECUREGATE_DB_PASS")
+        database = os.getenv("SECUREGATE_DB_NAME")
+        port = int(os.getenv("SECUREGATE_DB_PORT", "3306"))
 
-    except mysql.connector.Error as err:
-        print(f"Error: {err}")
-        return []
+        if not all([host, user, database]):
+            raise ValueError("Database environment variables missing")
+
+        conn = mysql.connector.connect(
+            host=host,
+            user=user,
+            password=password,
+            database=database,
+            port=port,
+            autocommit=True
+        )
+        return conn, conn.cursor()
+
+    except Exception as e:
+        print("SQL Error:", e)
+        return None, None
 
 import mysql.connector
 
@@ -165,13 +237,14 @@ def custom_askyesno(title, message):
 def fetch_ips(tp):
     try:
         connection = mysql.connector.connect(
-        host=SECUREGATE_DB_HOST,
-        user=SECUREGATE_DB_USER,
-        password=SECUREGATE_DB_PASS,
-        database=SECUREGATE_DB_NAME,
-        port=SECUREGATE_DB_PORT,
+        host=os.getenv("SECUREGATE_DB_HOST"),
+        user=os.getenv("SECUREGATE_DB_USER"),
+        password=os.getenv("SECUREGATE_DB_PASS"),
+        database=os.getenv("SECUREGATE_DB_NAME"),
+        port=int(os.getenv("SECUREGATE_DB_PORT", "3306")),
         autocommit=True
-        )
+    )
+
 
         cursor = connection.cursor()
 
@@ -201,47 +274,35 @@ def get_country(ip):
         print(f"Error: {str(e)}")
         return "Unknown"
 
-def update_null_countries(conn, cursor):
-    """
-    Finds IPs with a NULL country field and updates them.
-    If the country cannot be determined via the API, it sets the value to 'country not set'.
-    """
+def update_null_countries():
     try:
-        # Find all IPs where the country is NULL
-        cursor.execute("SELECT ip_address FROM ip WHERE country IS NULL")
-        null_ips = cursor.fetchall()
-        
-        if not null_ips:
-            print("No IPs found with a NULL country field.")
+        conn = connect_db()
+        if not conn:
             return
 
-        print(f"Found {len(null_ips)} IPs with a NULL country field. Updating...")
+        cursor = conn.cursor()
 
-        for ip_tuple in null_ips:
-            ip_address = ip_tuple[0]
-            
-            # Get the country from the API
-            api_country = get_country(ip_address)
-            
-            country_to_set = api_country
+        cursor.execute("SELECT ip_address FROM ip WHERE country IS NULL")
+        null_ips = cursor.fetchall()
+
+        for (ip,) in null_ips:
+            country = get_country(ip)
             cursor.execute(
-                "UPDATE ip SET country = %s WHERE ip_address = %s",
-                (country_to_set, ip_address)
+                "UPDATE ip SET country=%s WHERE ip_address=%s",
+                (country, ip)
             )
-            print(f"Updated IP {ip_address} to country: {country_to_set}")
 
         conn.commit()
-        print("Successfully updated all countries.")
-        
-    except mysql.connector.Error as err:
-        print(f"Database error: {err}")
-        conn.rollback() 
-        
+
+    except Exception as e:
+        print("update_null_countries error:", e)
+
     finally:
-        if conn and conn.is_connected():
+        try:
             cursor.close()
             conn.close()
-
+        except:
+            pass
 
 import bcrypt
 
@@ -912,7 +973,7 @@ def dashboardshow():
     show_bar_chart_by_country_integrated()
 
     # ---------------- LOGIC & THREADS ----------------
-    thread = threading.Thread(target=update_null_countries, args=(connection, cursor))
+    thread = threading.Thread(target=update_null_countries)
     thread.daemon = True
     thread.start()
 
@@ -1008,15 +1069,16 @@ def show_bar_chart_by_country_integrated():
     scrollbar.pack(side='right', fill='y')
     tree.pack(side='left', fill='both', expand=True)
 
-
 def connect_db():
+    load_dotenv(ENV_FILE, override=True)
+
     return mysql.connector.connect(
-       host=SECUREGATE_DB_HOST,
-    user=SECUREGATE_DB_USER,
-    password=SECUREGATE_DB_PASS,
-    database=SECUREGATE_DB_NAME,
-    port=SECUREGATE_DB_PORT,
-    autocommit=True
+        host=os.getenv("SECUREGATE_DB_HOST"),
+        user=os.getenv("SECUREGATE_DB_USER"),
+        password=os.getenv("SECUREGATE_DB_PASS"),
+        database=os.getenv("SECUREGATE_DB_NAME"),
+        port=int(os.getenv("SECUREGATE_DB_PORT", "3306")),
+        autocommit=True
     )
 
 def datamanage(page):

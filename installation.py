@@ -5,6 +5,7 @@ import shutil
 import requests
 import importlib.util
 import platform
+from dotenv import load_dotenv
 
 # ==================================================
 # CONFIG
@@ -16,11 +17,177 @@ ENGINE_SCRIPT = os.path.join(BASE_DIR, "securegate_new.py")
 MONITOR_SCRIPT = os.path.join(BASE_DIR, "network_monitor.py")
 GUI_SCRIPT = os.path.join(BASE_DIR, "gui.py")
 
+ENV_FILE = os.path.join(BASE_DIR, "securegate.env")
+
 ENGINE_SERVICE = "securegate-engine"
 MONITOR_SERVICE = "securegate-monitor"
+# ==================================================
+# ENV CONFIG (INSTALLER-ONLY)
+# ==================================================
+
+REQUIRED_ENV = {
+    "SECUREGATE_DB_HOST": "localhost",
+    "SECUREGATE_DB_PORT": "3306",
+    "SECUREGATE_DB_USER": "root",
+    "SECUREGATE_DB_PASS": "",
+    "SECUREGATE_DB_NAME": "securegate",
+
+    "SECUREGATE_QUEUE_MAXSIZE": "500000",
+    "SECUREGATE_PACKET_QUEUE_SIZE": "50000",
+    "SECUREGATE_WHITELIST_REFRESH_INTERVAL": "5",
+
+    "SECUREGATE_BLOCK_TIME_BUFFER_PERCENT": "10",
+
+    "SECUREGATE_PORT_SCAN_THRESHOLD": "25",
+    "SECUREGATE_HIGH_SEVERITY_PORTS": "100",
+    "SECUREGATE_MIN_PACKETS": "50",
+    "SECUREGATE_MASS_SCAN_PORTS": "1000",
+    "SECUREGATE_SYN_RATIO_THRESHOLD": "0.4",
+
+    "SECUREGATE_GEOIP_API": "http://ip-api.com/json",
+    "SECUREGATE_INTERNET_TEST_IP": "8.8.8.8",
+    "SECUREGATE_INTERNET_TEST_PORT": "53",
+
+    "SECUREGATE_INTERFACE": "eth0",
+    "SECUREGATE_LOG_COPY_INTERVAL": "3",
+
+    "SECUREGATE_LOG_FILE_STAGE2": "securegate_detailed_log2.json",
+    "SECUREGATE_LOG_FILE_IMPORTANT": "imp_detailed_log.json",
+    "SECUREGATE_KEY_FILE": "securegate.key",
+
+    "SECUREGATE_GUI_REFRESH_INTERVAL": "10",
+    "SECUREGATE_GUI_ROWS_PER_PAGE": "15",
+    "SECUREGATE_GUI_WIDTH": "1100",
+    "SECUREGATE_GUI_HEIGHT": "700",
+    "SECUREGATE_GUI_ICON": "securegate_image.ico",
+    "SECUREGATE_GUI_BANNER": "securegate_.png",
+    "SECUREGATE_GUI_THEME": "arc"
+}
+
+
+def env(key, default=None, required=False, cast=None):
+    val = os.getenv(key)
+
+    if val is None or val.strip() == "":
+        if required:
+            raise RuntimeError(f"Missing required env variable: {key}")
+        return default
+
+    val = val.strip()
+
+    if cast:
+        try:
+            return cast(val)
+        except Exception:
+            raise RuntimeError(f"Invalid value for {key}: {val}")
+
+    return val
+
+
+def build_db_config(allow_no_db=False):
+    cfg = {
+        "host": env("SECUREGATE_DB_HOST", "127.0.0.1"),
+        "user": env("SECUREGATE_DB_USER", "root"),
+        "password": env("SECUREGATE_DB_PASS", ""),
+        "port": env("SECUREGATE_DB_PORT", 3306, cast=int),
+        "connection_timeout": 3,
+        "autocommit": True,
+        "use_pure": True,
+    }
+
+    if not allow_no_db:
+        cfg["database"] = env("SECUREGATE_DB_NAME", required=True)
+
+    return cfg
+
+
+
+def create_env_file_once():
+    os.makedirs(BASE_DIR, exist_ok=True)
+
+    with open(ENV_FILE, "w") as f:
+        f.write("# SecureGate Environment Configuration\n\n")
+        for k, v in REQUIRED_ENV.items():
+            f.write(f"{k}={v}\n")
+
+    print("✅ securegate.env created")
+    print("⚠️  Review the file and re-run installer")
+    sys.exit(0)
+
+def validate_env_file_or_exit():
+    load_dotenv(ENV_FILE)
+
+    errors = []
+
+    for key in REQUIRED_ENV:
+        val = os.getenv(key)
+
+        if val is None or (val.strip() == "" and key != "SECUREGATE_DB_PASS"):
+            errors.append(f"Missing or empty: {key}")
+
+        if key.endswith("_PORT") or "SIZE" in key or "INTERVAL" in key:
+            if val and not val.isdigit():
+                errors.append(f"Invalid integer: {key}={val}")
+
+        if key == "SECUREGATE_SYN_RATIO_THRESHOLD":
+            try:
+                float(val)
+            except Exception:
+                errors.append(f"Invalid float: {key}={val}")
+
+    if errors:
+        print("\n❌ Configuration errors:\n")
+        for e in errors:
+            print("  •", e)
+        print("\n🛑 Fix securegate.env and re-run installer\n")
+        sys.exit(1)
+
+    print("✔ securegate.env validated\n")
+
+def ensure_env_ready():
+    if not os.path.exists(ENV_FILE):
+        create_env_file_once()
+    validate_env_file_or_exit()
+    confirm_env_or_exit()
+
 
 # ==================================================
-# 1. DEPENDENCY CHECK
+# ENV FILE REVIEW (USER CONFIRMATION)
+# ==================================================
+
+def open_env_file_for_edit():
+    print("\n📝 Opening securegate.env for review/editing...\n")
+
+    try:
+        if platform.system() == "Windows":
+            os.startfile(ENV_FILE)
+        elif platform.system() == "Linux":
+            subprocess.call(["nano", ENV_FILE])
+        else:
+            print(f"📄 Please edit manually: {ENV_FILE}")
+    except Exception:
+        print(f"📄 Please edit manually: {ENV_FILE}")
+
+def confirm_env_or_exit():
+    open_env_file_for_edit()
+
+    answer = input("\n❓ Is the configuration correct? (yes/no): ").strip().lower()
+    if answer not in ("yes", "y"):
+        print("\n🛑 Installation aborted.")
+        print("👉 Fix securegate.env and re-run installer.\n")
+        sys.exit(0)
+
+    # 🔁 RELOAD ENV AFTER USER MODIFICATION (CRITICAL FIX)
+    load_dotenv(ENV_FILE, override=True)
+
+    # 🔍 Re-validate with UPDATED values
+    validate_env_file_or_exit()
+
+    print("✔ Configuration confirmed and reloaded\n")
+
+
+# ==================================================
+# DEPENDENCY CHECK
 # ==================================================
 
 LIBRARIES = {
@@ -32,6 +199,7 @@ LIBRARIES = {
     "bcrypt": "bcrypt",
     "psutil": "psutil",
     "PIL": "Pillow",
+    "dotenv": "python-dotenv"
 }
 
 def module_installed(name):
@@ -58,7 +226,7 @@ def ensure_dependencies():
     print("\n✔ All dependencies ready\n")
 
 # ==================================================
-# 2. DOWNLOAD FILES
+# DOWNLOAD FILES
 # ==================================================
 
 FILES = {
@@ -89,66 +257,82 @@ def download_files():
             sys.exit(1)
 
 # ==================================================
-# 3. MYSQL CHECK
+# MYSQL CHECK
 # ==================================================
+import mysql.connector
+import time
 def ensure_mysql_ready_or_exit():
-    print("\n🔍 Checking MySQL service (OS-level)\n")
-    system = platform.system()
+    import sys, time, subprocess, platform
+    import mysql.connector
 
-    def run(cmd):
-        return subprocess.call(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        ) == 0
+    def can_connect():
+        try:
+            conn = mysql.connector.connect(
+                **build_db_config(allow_no_db=True)
+            )
+            conn.close()
+            return True
+        except mysql.connector.Error:
+            return False
 
-    if system == "Linux":
-        # MySQL may be mysql or mariadb
-        if run(["systemctl", "is-active", "--quiet", "mysql"]) or \
-           run(["systemctl", "is-active", "--quiet", "mariadb"]):
-            print("✔ MySQL/MariaDB service is running")
-            return
+    os_name = platform.system()
+    print("\n🔍 Checking MySQL availability...\n")
 
-        print("⚠ MySQL not running. Attempting to start...")
-        if run(["systemctl", "start", "mysql"]) or \
-           run(["systemctl", "start", "mariadb"]):
-            print("✔ MySQL service started")
-            return
+    # 1️⃣ Direct connection test
+    if can_connect():
+        print("✔ MySQL already reachable")
+        return
 
-        print("❌ MySQL service failed to start")
+    # ==================================================
+    # 🐧 LINUX
+    # ==================================================
+    if os_name == "Linux":
+        print("⚠ MySQL not reachable, starting Linux service...\n")
+
+        for service in ("mariadb", "mysql"):
+            subprocess.call(["systemctl", "start", service])
+
+            for _ in range(5):
+                if can_connect():
+                    print(f"✔ MySQL ready via {service}")
+                    return
+
+        print("\n❌ MySQL could not be started (Linux)")
         sys.exit(1)
 
-    elif system == "Windows":
-        # Windows service name varies: MySQL, MySQL80, etc.
-        result = subprocess.check_output(
-            ["sc", "query"],
-            stderr=subprocess.DEVNULL,
-            text=True
-        )
+    # ==================================================
+    # 🪟 WINDOWS
+    # ==================================================
+    elif os_name == "Windows":
+        print("⚠ MySQL not reachable, starting Windows service...\n")
 
-        mysql_services = [line.split()[0] for line in result.splitlines()
-                          if "MySQL" in line]
+        for service in ("MySQL80", "MySQL"):
+            print(f"▶ Trying service: {service}")
+            subprocess.call(
+                ["sc", "start", service],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                shell=True
+            )
 
-        if not mysql_services:
-            print("❌ No MySQL service found on system")
-            sys.exit(1)
+          
+            for _ in range(5):
+                if can_connect():
+                    print(f"✔ MySQL ready via {service}")
+                    return
 
-        for svc in mysql_services:
-            if run(["sc", "query", svc]):
-                run(["net", "start", svc])
-                print(f"✔ MySQL service running: {svc}")
-                return
-
-        print("❌ MySQL service exists but could not be started")
+        print("\n❌ MySQL could not be started (Windows)")
+     
+    else:
+        print(f"❌ Unsupported OS: {os_name}")
         sys.exit(1)
 
 # ==================================================
-# 4. SERVICES (LINUX)
+# SERVICES
 # ==================================================
 
 def create_linux_service(name, script):
     service_path = f"/etc/systemd/system/{name}.service"
-
     if os.path.exists(service_path):
         print(f"✔ {name} service exists")
         return
@@ -172,69 +356,88 @@ WantedBy=multi-user.target
     with open(service_path, "w") as f:
         f.write(content)
 
-    subprocess.check_call(["systemctl", "daemon-reload"])
-    subprocess.check_call(["systemctl", "enable", name])
-    subprocess.check_call(["systemctl", "start", name])
+    subprocess.call(["systemctl", "daemon-reload"])
+    subprocess.call(["systemctl", "enable", name])
+    subprocess.call(["systemctl", "start", name])
 
-    print(f"✔ Created Linux service: {name}")
+    print(f"✔ Created service: {name}")
+def create_windows_service(name, script_path):
+    import subprocess
+    import sys
+    import os
 
-# ==================================================
-# 5. SERVICES (WINDOWS)
-# ==================================================
-
-def create_windows_service(name, script):
     python = sys.executable
-    cmd = f'"{python}" "{script}"'
+    task_name = name
 
-    exists = subprocess.call(
-        ["sc", "query", name],
+    # Check if task already exists
+    check = subprocess.run(
+        f'schtasks /query /tn "{task_name}"',
+        shell=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL
-    ) == 0
+    )
 
-    if exists:
-        print(f"✔ {name} service exists")
+    if check.returncode == 0:
+        print(f"✔ Task '{task_name}' already exists")
         return
 
-    subprocess.check_call([
-        "sc", "create", name,
-        "binPath=", cmd,
-        "start=", "auto"
-    ])
-    subprocess.check_call(["sc", "start", name])
+    print(f"🪟 Creating background service (Task Scheduler): {task_name}")
 
-    print(f"✔ Created Windows service: {name}")
+    command = (
+        f'schtasks /create '
+        f'/tn "{task_name}" '
+        f'/tr "\\"{python}\\" \\"{script_path}\\"" '
+        f'/sc onstart '
+        f'/ru SYSTEM '
+        f'/rl HIGHEST '
+        f'/f'
+    )
 
-# ==================================================
-# 6. ENSURE SERVICES RUNNING
-# ==================================================
+    result = subprocess.run(command, shell=True)
+
+    if result.returncode != 0:
+        print("❌ Failed to create scheduled task")
+        sys.exit(1)
+
+    print(f"✔ Service-like task created: {task_name}")
+    print("▶ It will start automatically at system boot")
+
+    # Start immediately
+    subprocess.run(f'schtasks /run /tn "{task_name}"', shell=True)
 
 def ensure_services():
-    print("\n⚙ Ensuring SecureGate services\n")
-    system = platform.system()
+    os_name = platform.system()
 
-    if system == "Linux":
+    if os_name == "Linux":
         create_linux_service(ENGINE_SERVICE, ENGINE_SCRIPT)
         create_linux_service(MONITOR_SERVICE, MONITOR_SCRIPT)
 
-    elif system == "Windows":
+    elif os_name == "Windows":
         create_windows_service(ENGINE_SERVICE, ENGINE_SCRIPT)
         create_windows_service(MONITOR_SERVICE, MONITOR_SCRIPT)
 
-# ==================================================
-# 7. LAUNCH GUI
-# ==================================================
 
+# ==================================================
+# GUI
+# ==================================================
 def launch_gui():
     print("\n🖥 Launching SecureGate GUI\n")
-    system = platform.system()
 
-    if system == "Windows":
-        subprocess.Popen(["cmd", "/k", sys.executable, GUI_SCRIPT])
+    if platform.system() == "Linux":
+        subprocess.Popen([
+            "xterm", "-hold", "-e",
+            f"{sys.executable} {GUI_SCRIPT}"
+        ])
+
+    elif platform.system() == "Windows":
+        # Open GUI in a new window (no console dependency)
+        subprocess.Popen(
+            [sys.executable, GUI_SCRIPT],
+            creationflags=subprocess.CREATE_NEW_CONSOLE
+        )
+
     else:
-        if not shutil.which("xterm"):
-            subprocess.check_call(["apt", "install", "-y", "xterm"])
-        subprocess.Popen(["xterm", "-hold", "-e", f"{sys.executable} {GUI_SCRIPT}"])
+        print("⚠ GUI launch not supported on this OS")
 
 # ==================================================
 # MAIN
@@ -243,6 +446,7 @@ def launch_gui():
 def main():
     ensure_dependencies()
     download_files()
+    ensure_env_ready()
     ensure_mysql_ready_or_exit()
     ensure_services()
     launch_gui()

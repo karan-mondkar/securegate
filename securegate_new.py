@@ -31,132 +31,313 @@ counter_temp=0
 counter_temp2=0
 
 
+
+
+
+# =========================================
+# SecureGate Global Configuration Loader
+# =========================================
+
+import os
+import sys
+from dotenv import load_dotenv
+
+# -------------------------------------------------
+# 🔴 MANUAL OVERRIDE (HIGHEST PRIORITY)
+# -------------------------------------------------
+MANUAL_INTERFACE = "Wi-Fi"   # Set to None to disable manual override
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ENV_FILE = os.path.join(BASE_DIR, "securegate.env")
+
+# -------------------------------------------------
+# REQUIRED CONFIG FIELDS + DEFAULTS
+# -------------------------------------------------
+REQUIRED_ENV = {
+    # ---- Database ----
+    "SECUREGATE_DB_HOST": "localhost",
+    "SECUREGATE_DB_PORT": "3306",
+    "SECUREGATE_DB_USER": "root",
+    "SECUREGATE_DB_PASS": "",
+    "SECUREGATE_DB_NAME": "securegate",
+
+    # ---- Performance ----
+    "SECUREGATE_QUEUE_MAXSIZE": "500000",
+    "SECUREGATE_PACKET_QUEUE_SIZE": "50000",
+    "SECUREGATE_WHITELIST_REFRESH_INTERVAL": "5",
+
+    # ---- Blocking ----
+    "SECUREGATE_BLOCK_TIME_BUFFER_PERCENT": "10",
+
+    # ---- Detection ----
+    "SECUREGATE_PORT_SCAN_THRESHOLD": "25",
+    "SECUREGATE_HIGH_SEVERITY_PORTS": "100",
+    "SECUREGATE_MIN_PACKETS": "50",
+    "SECUREGATE_MASS_SCAN_PORTS": "1000",
+    "SECUREGATE_SYN_RATIO_THRESHOLD": "0.4",
+
+    # ---- Network / APIs ----
+    "SECUREGATE_GEOIP_API": "http://ip-api.com/json",
+    "SECUREGATE_INTERNET_TEST_IP": "8.8.8.8",
+    "SECUREGATE_INTERNET_TEST_PORT": "53",
+
+    # ---- Packet Capture ----
+    "SECUREGATE_INTERFACE": "auto",
+    "SECUREGATE_LOG_COPY_INTERVAL": "3",
+
+    # ---- Files ----
+    "SECUREGATE_LOG_FILE_STAGE1": "securegate_detailed_log1.json",
+    "SECUREGATE_LOG_FILE_STAGE2": "securegate_detailed_log2.json",
+    "SECUREGATE_LOG_FILE_IMPORTANT": "imp_detailed_log.json",
+    "SECUREGATE_KEY_FILE": "securegate.key",
+
+    # ---- GUI ----
+    "SECUREGATE_GUI_REFRESH_INTERVAL": "10",
+    "SECUREGATE_GUI_ROWS_PER_PAGE": "15",
+    "SECUREGATE_GUI_WIDTH": "1100",
+    "SECUREGATE_GUI_HEIGHT": "700",
+    "SECUREGATE_GUI_ICON": "securegate_image.ico",
+    "SECUREGATE_GUI_BANNER": "securegate_.png",
+    "SECUREGATE_GUI_THEME": "arc"
+}
+
+
+def resolve_log_path(log_filename):
+    LOG_DIR = "securegate_files"
+    cwd = os.getcwd()
+
+    if os.path.basename(cwd) == LOG_DIR:
+        path = os.path.join(cwd, log_filename)
+
+    elif os.path.exists(os.path.join(cwd, LOG_DIR)):
+        path = os.path.join(cwd, LOG_DIR, log_filename)
+
+    else:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        path = os.path.join(cwd, LOG_DIR, log_filename)
+
+    # Ensure file exists
+    open(path, "a").close()
+    return path
+
+
+
+# -------------------------------------------------
+# VALIDATE ENV FILE CONTENT
+# -------------------------------------------------
+def validate_env():
+    errors = []
+
+    for key in REQUIRED_ENV:
+        value = os.getenv(key)
+
+        # ---------- Missing / Empty ----------
+        if (value is None or value.strip() == "") and key != "SECUREGATE_DB_PASS":
+            errors.append(f"Missing or empty value: {key}")
+            continue
+
+        if value is None:
+            continue
+
+        value = value.strip()
+
+        # ---------- Integer fields ----------
+        if key.endswith("_PORT") or "SIZE" in key or "INTERVAL" in key:
+            try:
+                int(value)
+            except ValueError:
+                errors.append(f"Invalid integer value for {key}: {value}")
+
+        # ---------- Float field ----------
+        if key == "SECUREGATE_SYN_RATIO_THRESHOLD":
+            try:
+                float(value)
+            except ValueError:
+                errors.append(f"Invalid float value for {key}: {value}")
+
+    if errors:
+        print("\n❌ CONFIGURATION ERRORS DETECTED:\n")
+        for err in errors:
+            print(f"   • {err}")
+        print("\n🛑 Fix securegate.env and restart SecureGate\n")
+        #sys.exit(1)
+
+
+# -------------------------------------------------
+# MAIN CONFIG LOADER
+# -------------------------------------------------
+
+def load_securegate_config():
+    global INTERFACE_NAME
+    global SECUREGATE_DB_HOST, SECUREGATE_DB_PORT, SECUREGATE_DB_USER, SECUREGATE_DB_PASS, SECUREGATE_DB_NAME
+    global SECUREGATE_QUEUE_MAXSIZE, SECUREGATE_PACKET_QUEUE_SIZE, SECUREGATE_WHITELIST_REFRESH_INTERVAL
+    global SECUREGATE_BLOCK_TIME_BUFFER_PERCENT
+    global SECUREGATE_PORT_SCAN_THRESHOLD, SECUREGATE_HIGH_SEVERITY_PORTS
+    global SECUREGATE_MIN_PACKETS, SECUREGATE_MASS_SCAN_PORTS, SECUREGATE_SYN_RATIO_THRESHOLD
+    global SECUREGATE_GEOIP_API, SECUREGATE_INTERNET_TEST_IP, SECUREGATE_INTERNET_TEST_PORT
+    global SECUREGATE_LOG_COPY_INTERVAL
+    global SECUREGATE_LOG_FILE_STAGE1, SECUREGATE_LOG_FILE_STAGE2, SECUREGATE_LOG_FILE_IMPORTANT, SECUREGATE_KEY_FILE
+    global SECUREGATE_GUI_REFRESH_INTERVAL, SECUREGATE_GUI_ROWS_PER_PAGE
+    global SECUREGATE_GUI_WIDTH, SECUREGATE_GUI_HEIGHT
+    global SECUREGATE_GUI_ICON, SECUREGATE_GUI_BANNER, SECUREGATE_GUI_THEME
+
+  
+
+    # Step 2: Load env
+    load_dotenv(ENV_FILE)
+
+    # Step 3: Validate
+    validate_env()
+
+    # Step 4: Assign values
+    INTERFACE_NAME = os.getenv("SECUREGATE_INTERFACE")
+
+    SECUREGATE_DB_HOST = os.getenv("SECUREGATE_DB_HOST")
+    SECUREGATE_DB_PORT = int(os.getenv("SECUREGATE_DB_PORT",0))
+    SECUREGATE_DB_USER = os.getenv("SECUREGATE_DB_USER")
+    SECUREGATE_DB_PASS = os.getenv("SECUREGATE_DB_PASS")
+    SECUREGATE_DB_NAME = os.getenv("SECUREGATE_DB_NAME")
+
+    SECUREGATE_QUEUE_MAXSIZE = int(os.getenv("SECUREGATE_QUEUE_MAXSIZE"))
+    SECUREGATE_PACKET_QUEUE_SIZE = int(os.getenv("SECUREGATE_PACKET_QUEUE_SIZE"))
+    SECUREGATE_WHITELIST_REFRESH_INTERVAL = int(os.getenv("SECUREGATE_WHITELIST_REFRESH_INTERVAL"))
+
+    SECUREGATE_BLOCK_TIME_BUFFER_PERCENT = int(os.getenv("SECUREGATE_BLOCK_TIME_BUFFER_PERCENT"))
+
+    SECUREGATE_PORT_SCAN_THRESHOLD = int(os.getenv("SECUREGATE_PORT_SCAN_THRESHOLD"))
+    SECUREGATE_HIGH_SEVERITY_PORTS = int(os.getenv("SECUREGATE_HIGH_SEVERITY_PORTS"))
+    SECUREGATE_MIN_PACKETS = int(os.getenv("SECUREGATE_MIN_PACKETS"))
+    SECUREGATE_MASS_SCAN_PORTS = int(os.getenv("SECUREGATE_MASS_SCAN_PORTS"))
+    SECUREGATE_SYN_RATIO_THRESHOLD = float(os.getenv("SECUREGATE_SYN_RATIO_THRESHOLD"))
+
+    SECUREGATE_GEOIP_API = os.getenv("SECUREGATE_GEOIP_API")
+    SECUREGATE_INTERNET_TEST_IP = os.getenv("SECUREGATE_INTERNET_TEST_IP")
+    SECUREGATE_INTERNET_TEST_PORT = int(os.getenv("SECUREGATE_INTERNET_TEST_PORT"))
+
+    SECUREGATE_LOG_COPY_INTERVAL = int(os.getenv("SECUREGATE_LOG_COPY_INTERVAL"))
+    SECUREGATE_LOG_FILE_STAGE1 = os.getenv("SECUREGATE_LOG_FILE_STAGE1")
+    SECUREGATE_LOG_FILE_STAGE2 = resolve_log_path(
+                        os.getenv("SECUREGATE_LOG_FILE_STAGE2"))
+    SECUREGATE_LOG_FILE_IMPORTANT = os.getenv("SECUREGATE_LOG_FILE_IMPORTANT")
+    SECUREGATE_KEY_FILE = os.getenv("SECUREGATE_KEY_FILE")
+
+    SECUREGATE_GUI_REFRESH_INTERVAL = int(os.getenv("SECUREGATE_GUI_REFRESH_INTERVAL"))
+    SECUREGATE_GUI_ROWS_PER_PAGE = int(os.getenv("SECUREGATE_GUI_ROWS_PER_PAGE"))
+    SECUREGATE_GUI_WIDTH = int(os.getenv("SECUREGATE_GUI_WIDTH"))
+    SECUREGATE_GUI_HEIGHT = int(os.getenv("SECUREGATE_GUI_HEIGHT"))
+    SECUREGATE_GUI_ICON = os.getenv("SECUREGATE_GUI_ICON")
+    SECUREGATE_GUI_BANNER = os.getenv("SECUREGATE_GUI_BANNER")
+    SECUREGATE_GUI_THEME = os.getenv("SECUREGATE_GUI_THEME")
+
+    # -------------------------------------------------
+    # SUCCESS OUTPUT
+    # -------------------------------------------------
+    print("\n✅ SecureGate configuration loaded successfully")
+    print(f"   Interface  : {INTERFACE_NAME}")
+    print(f"   Database   : {SECUREGATE_DB_NAME}@{SECUREGATE_DB_HOST}")
+    print(f"   Queue Size : {SECUREGATE_QUEUE_MAXSIZE}")
+    print(f"   GUI Theme  : {SECUREGATE_GUI_THEME}\n")
+
+
+def ensure_mysql_ready_or_exit():
+    import sys, time, subprocess, platform
+    import mysql.connector
+
+    def can_connect():
+        try:
+            conn = mysql.connector.connect(
+                host=SECUREGATE_DB_HOST,
+                user=SECUREGATE_DB_USER,
+                password=SECUREGATE_DB_PASS,
+                port=SECUREGATE_DB_PORT,
+                connection_timeout=3
+            )
+            conn.close()
+            return True
+        except mysql.connector.Error:
+            return False
+
+    os_name = platform.system()
+    print("\n🔍 Checking MySQL availability...\n")
+
+    # 1️⃣ Direct connection test
+    if can_connect():
+        print("✔ MySQL already reachable")
+        return
+
+    # ==================================================
+    # 🐧 LINUX
+    # ==================================================
+    if os_name == "Linux":
+        print("⚠ MySQL not reachable, starting Linux service...\n")
+
+        for service in ("mariadb", "mysql"):
+            subprocess.call(["systemctl", "start", service])
+
+            for _ in range(5):
+                if can_connect():
+                    print(f"✔ MySQL ready via {service}")
+                    return
+
+        print("\n❌ MySQL could not be started (Linux)")
+        sys.exit(1)
+
+    # ==================================================
+    # 🪟 WINDOWS
+    # ==================================================
+    elif os_name == "Windows":
+        print("⚠ MySQL not reachable, starting Windows service...\n")
+
+        for service in ("MySQL80", "MySQL"):
+            print(f"▶ Trying service: {service}")
+            subprocess.call(
+                ["sc", "start", service],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                shell=True
+            )
+
+          
+            for _ in range(5):
+                if can_connect():
+                    print(f"✔ MySQL ready via {service}")
+                    return
+
+        print("\n❌ MySQL could not be started (Windows)")
+     
+    else:
+        print(f"❌ Unsupported OS: {os_name}")
+        sys.exit(1)
+
+
+load_securegate_config()
+
+
+
+
+
+
+
+
+
+
 import queue
-request_queue=queue.Queue(maxsize=500000)
+request_queue = queue.Queue(maxsize=SECUREGATE_QUEUE_MAXSIZE)
+
 insertion_time=datetime.now()
 
 
 LAST_WHITELIST_FETCH = 0
-WHITELIST_REFRESH_INTERVAL = 5  # seconds
+
 WHITELIST_CACHE = set()
 
 from scipy.stats import norm
 
-# import os
-# import re
 
-# ENV_DIR = "securegate_files"
-# ENV_FILE = "securegate.env"
-# ENV_PATH = os.path.join(ENV_DIR, ENV_FILE)
 
-# REQUIRED_FIELDS = {
-#     "SECUREGATE_DB_HOST": {
-#         "prompt": "Database host",
-#         "example": "localhost"
-#     },
-#     "SECUREGATE_DB_PORT": {
-#         "prompt": "Database port",
-#         "example": "3306",
-#         "validator": lambda x: x.isdigit() and 1 <= int(x) <= 65535
-#     },
-#     "SECUREGATE_DB_USER": {
-#         "prompt": "Database username",
-#         "example": "root"
-#     },
-#     "SECUREGATE_DB_PASS": {
-#         "prompt": "Database password",
-#         "example": "StrongPassword123"
-#     },
-#     "SECUREGATE_DB_NAME": {
-#         "prompt": "Database name",
-#         "example": "securegate"
-#     },
-#     "SECUREGATE_SMTP_HOST": {
-#         "prompt": "SMTP host",
-#         "example": "smtp.gmail.com"
-#     },
-#     "SECUREGATE_SMTP_PORT": {
-#         "prompt": "SMTP port",
-#         "example": "587",
-#         "validator": lambda x: x.isdigit() and 1 <= int(x) <= 65535
-#     },
-#     "SECUREGATE_SMTP_USER": {
-#         "prompt": "SMTP user email",
-#         "example": "alerts@securegate.work.gd",
-#         "validator": lambda x: re.match(r"[^@]+@[^@]+\.[^@]+", x)
-#     },
-#     "SECUREGATE_SMTP_PASS": {
-#         "prompt": "SMTP password / app password",
-#         "example": "AppPasswordHere"
-#     },
-#     "SECUREGATE_SECRET_KEY": {
-#         "prompt": "SecureGate secret key",
-#         "example": "random_long_secret_string_32_chars"
-#     }
-# }
 
-# def ask_until_valid(key, meta):
-#     while True:
-#         value = input(f"{meta['prompt']}: ").strip()
 
-#         if not value:
-#             print(f"❌ Error: Value cannot be empty")
-#             print(f"👉 Expected format example: {key}={meta['example']}\n")
-#             continue
 
-#         if "validator" in meta and not meta["validator"](value):
-#             print(f"❌ Invalid value for {key}")
-#             print(f"👉 Expected format example: {key}={meta['example']}\n")
-#             continue
-
-#         return value
-
-# def create_or_complete_env():
-#     if not os.path.isdir(ENV_DIR):
-#         os.makedirs(ENV_DIR, exist_ok=True)
-
-#     existing = {}
-
-#     if os.path.exists(ENV_PATH):
-#         with open(ENV_PATH, "r") as f:
-#             for line in f:
-#                 if "=" in line and not line.strip().startswith("#"):
-#                     k, v = line.strip().split("=", 1)
-#                     existing[k] = v
-
-#     new_entries = []
-
-#     print("\n🔐 SecureGate Environment Setup\n")
-
-#     for key, meta in REQUIRED_FIELDS.items():
-#         if key in existing and existing[key] and existing[key] != "CHANGE_ME":
-#             continue  # already valid
-
-#         print(f"[SETUP] {key}")
-#         value = ask_until_valid(key, meta)
-#         new_entries.append(f"{key}={value}")
-
-#     if not os.path.exists(ENV_PATH):
-#         with open(ENV_PATH, "w") as f:
-#             f.write("# SecureGate Environment Configuration\n\n")
-
-#     if new_entries:
-#         with open(ENV_PATH, "a") as f:
-#             for line in new_entries:
-#                 f.write(line + "\n")
-
-#         try:
-#             if os.name != "nt":
-#                 os.chmod(ENV_PATH, 0o600)
-#         except Exception:
-#             pass
-
-#         print("\n✅ securegate.env updated successfully.")
-#     else:
-#         print("✅ All required values already exist. No changes needed.")
-
-# # Call once at startup
-# create_or_complete_env()
 
 
 class SYS_INFO:
@@ -172,15 +353,16 @@ class SYS_INFO:
     @staticmethod
     def dbcreate():
             connection = mysql.connector.connect(
-                host="localhost",
-                user="root",
-                password="",
-                port=3306,
-            )
+    host=SECUREGATE_DB_HOST,
+    user=SECUREGATE_DB_USER,
+    password=SECUREGATE_DB_PASS,
+    port=SECUREGATE_DB_PORT,
+)
+
             cursor=connection.cursor()
         
-            cursor.execute("CREATE DATABASE IF NOT EXISTS securegate")
-            cursor.execute("USE securegate")
+            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {SECUREGATE_DB_NAME}")
+            cursor.execute(f"USE {SECUREGATE_DB_NAME}")
             #ip table
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS ip (
@@ -362,7 +544,8 @@ CREATE TABLE IF NOT EXISTS settings (
         # Continuously monitor network requests
     def monitor_requests(self):
         global counter_temp2
-        log_file_path = "securegate_detailed_log2.json"
+
+        log_file_path = SECUREGATE_LOG_FILE_STAGE2
         remaining_lines = []
         try:
             if os.path.exists(log_file_path) and os.path.getsize(log_file_path) > 0:
@@ -402,7 +585,7 @@ CREATE TABLE IF NOT EXISTS settings (
             global WHITELIST_CACHE,LAST_WHITELIST_FETCH
            
             now = time.time()
-            if now - LAST_WHITELIST_FETCH > WHITELIST_REFRESH_INTERVAL:
+            if now - LAST_WHITELIST_FETCH > SECUREGATE_WHITELIST_REFRESH_INTERVAL:
             
                 try:
                     cursor = connection.cursor()
@@ -514,7 +697,8 @@ CREATE TABLE IF NOT EXISTS settings (
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.settimeout(1) 
-            sock.sendto(b'', ("8.8.8.8", 53))
+            sock.sendto(b'',(SECUREGATE_INTERNET_TEST_IP, SECUREGATE_INTERNET_TEST_PORT))
+
             return True
         except Exception:
             return False
@@ -522,7 +706,7 @@ CREATE TABLE IF NOT EXISTS settings (
             sock.close()
     @staticmethod
     def assign_country(conn,cursor):
-        if sys_info.is_connected_to_internet:
+        if sys_info.is_connected_to_internet():
             try:
                     while True: 
                         cursor.execute("""SELECT ip_address FROM ip WHERE country IS NULL LIMIT 100""")
@@ -544,6 +728,9 @@ CREATE TABLE IF NOT EXISTS settings (
     @staticmethod
     def upsert_attack(cursor, attack_type, src_ip, fingerprint, severity):
         
+
+
+
         cursor.execute("""
         SELECT 1
         FROM attack_state
@@ -730,11 +917,11 @@ CREATE TABLE IF NOT EXISTS settings (
                 print(e)
     #attack checking starts from here::::::::::::
 
-        PORT_THRESHOLD = 25
-        high_sev_port=100
-        MIN_PACKETS = 50
-        mass_scan_ports=1000
-        SYN_RATIO_THRESHOLD = 0.4  #if more than 40% are syn packets then syn attack
+        PORT_THRESHOLD = SECUREGATE_PORT_SCAN_THRESHOLD
+        high_sev_port = SECUREGATE_HIGH_SEVERITY_PORTS
+        MIN_PACKETS = SECUREGATE_MIN_PACKETS
+        mass_scan_ports = SECUREGATE_MASS_SCAN_PORTS
+        SYN_RATIO_THRESHOLD = SECUREGATE_SYN_RATIO_THRESHOLD
         query = """
         SELECT 
             request_time,
@@ -992,7 +1179,7 @@ class IPS:
             # NOTE: Proceed even if IP is in block_list to ensure firewall sync
             
             try:
-                blkmin = int(blkps + blkps * 10 / 100)
+                blkmin = int(blkps + blkps * SECUREGATE_BLOCK_TIME_BUFFER_PERCENT / 100)
                 blocktime = datetime.now() + timedelta(minutes=blkmin)
 
                 # ===================== LINUX (GATEWAY) =====================
@@ -1103,7 +1290,7 @@ class IPS:
                 print(f"[!] Critical Error unblocking IP {ip_address}: {e}")            
     def get_country(self,ip):
         try:
-            response = requests.get(f"http://ip-api.com/json/{ip}")
+            response = requests.get(f"{SECUREGATE_GEOIP_API}/{ip}")
             data = response.json()
             return data.get("country", "Unknown")
         except Exception as e:
@@ -1115,7 +1302,7 @@ class IPS:
         if x in loopback:
             return True
         else :
-            False
+            return False
     
     def whitelist_ips(self):
         cursor = None
@@ -1689,12 +1876,41 @@ class EMERGENCY_ALERT:
 
             if os.path.isfile(sensitive_folder):
                 try:
+                    key_file = "securegate.key"
+
+                    # Generate key once
+                    if not os.path.exists(key_file):
+                        key = fernet.generate_key()
+                        with open(key_file, "wb") as kf:
+                            kf.write(key)
+                    else:
+                        with open(key_file, "rb") as kf:
+                            key = kf.read()
+
+                    fernet = fernet(key)
+
+                    # Read original file
+                    with open(sensitive_folder, "rb") as f:
+                        data = f.read()
+
+                    # Encrypt
+                    encrypted_data = fernet.encrypt(data)
+
+                    encrypted_path = sensitive_folder + ".enc"
+                    with open(encrypted_path, "wb") as f:
+                        f.write(encrypted_data)
+
+                    print(f"[SECURE] File encrypted: {encrypted_path}")
+
+                    # Remove original after encryption
                     os.remove(sensitive_folder)
-                    print(f"[SECURE] File deleted: {sensitive_folder}")
+                    print(f"[INFO] Original file removed after encryption")
+
                 except Exception as e:
-                    print(f"[ERROR] Unable to delete file: {e}")
+                    print(f"[ERROR] Encryption failed: {e}")
             else:
                 print(f"[INFO] File not found: {sensitive_folder}")
+
 
         except Exception as e:
             print(f"[!] Error: {e}")  
@@ -1852,30 +2068,31 @@ import mysql.connector
 
 
 
-SYS_INFO.dbcreate()
-db_name="securegate"
 
 
-
-connection = mysql.connector.connect(
-                host="localhost",
-                user="root",
-                password="",
-                port=3306,
-                database=db_name
-            )
-
-cursor=connection.cursor(buffered=True)  # fetch kelela data read tevhach kela pahije as kahi nahi so he vapraych
-ips=IPS(connection,cursor)
-SYS_INFO.dbcreate()
-
-request=REQUEST(connection,cursor)
-iprequest=IPREQUEST(connection,cursor)
-network_protocol=NETWORK_PROTOCOL(connection,cursor)
-sys_info=SYS_INFO(ips,request,iprequest,network_protocol,connection,cursor)
 
 RUN_ENGINE=True
 if __name__ == "__main__" and RUN_ENGINE:
+    
+    ensure_mysql_ready_or_exit()
+    SYS_INFO.dbcreate()
+    connection = mysql.connector.connect(
+        host=SECUREGATE_DB_HOST,
+        user=SECUREGATE_DB_USER,
+        password=SECUREGATE_DB_PASS,
+        port=SECUREGATE_DB_PORT,
+        database=SECUREGATE_DB_NAME
+    )
+        
+    cursor=connection.cursor(buffered=True)  # fetch kelela data read tevhach kela pahije as kahi nahi so he vapraych
+    ips=IPS(connection,cursor)
+   
+
+    request=REQUEST(connection,cursor)
+    iprequest=IPREQUEST(connection,cursor)
+    network_protocol=NETWORK_PROTOCOL(connection,cursor)
+    sys_info=SYS_INFO(ips,request,iprequest,network_protocol,connection,cursor)
+
     while True:
         print("monitor request")
         sys_info.monitor_requests()
@@ -1883,13 +2100,4 @@ if __name__ == "__main__" and RUN_ENGINE:
         sys_info.process()
         print("check suspiciousness")
         sys_info.check_suspiciousness()
-        #EMERGENCY_ALERT.upload_sensitive_files_to_drive()
-        #EMERGENCY_ALERT.send_email_alert("my testing","my testing email")
-        EMERGENCY_ALERT.honeypot_diversion("36.0.0.2",True)
-        print(1)
-        EMERGENCY_ALERT.honeypot_diversion("36.0.0.2",False)
-        print(0)
-        ips.block_ip("36.0.0.2",10)
-        print(1)
-        ips.unblock_ip("36.0.0.2")
-        print(0)        
+      

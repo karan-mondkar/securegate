@@ -7,24 +7,43 @@ import portalocker
 import json
 import queue
 import psutil
+from dotenv import load_dotenv
+import os
+
+ENV_FILE = os.path.join(os.path.dirname(__file__), "securegate.env")
+
+# Load env safely (NO engine import)
+load_dotenv(ENV_FILE)
 
 # -------------------------------------------------
-# IMPORT GLOBAL CONFIG (ONLY CHANGE)
+# GLOBAL CONFIG (SAFE)
 # -------------------------------------------------
-from securegate_new import (
-    INTERFACE_NAME,
-    SECUREGATE_PACKET_QUEUE_SIZE,
-    SECUREGATE_LOG_FILE_STAGE1,
-    SECUREGATE_LOG_FILE_STAGE2,
-    SECUREGATE_LOG_FILE_IMPORTANT,
-    SECUREGATE_LOG_COPY_INTERVAL
+INTERFACE_NAME = os.getenv("SECUREGATE_INTERFACE", "eth0")
+
+SECUREGATE_PACKET_QUEUE_SIZE = int(
+    os.getenv("SECUREGATE_PACKET_QUEUE_SIZE", "50000")
+)
+
+SECUREGATE_LOG_FILE_STAGE1 = os.getenv(
+    "SECUREGATE_LOG_FILE_STAGE1", "securegate_detailed_log1.json"
+)
+
+SECUREGATE_LOG_FILE_STAGE2 = os.getenv(
+    "SECUREGATE_LOG_FILE_STAGE2", "securegate_detailed_log2.json"
+)
+
+SECUREGATE_LOG_FILE_IMPORTANT = os.getenv(
+    "SECUREGATE_LOG_FILE_IMPORTANT", "imp_detailed_log.json"
+)
+
+SECUREGATE_LOG_COPY_INTERVAL = int(
+    os.getenv("SECUREGATE_LOG_COPY_INTERVAL", "3")
 )
 
 # -------------------------------------------------
-# INTERFACE (GLOBAL CONFIG)
+# INTERFACE
 # -------------------------------------------------
 iface_name = INTERFACE_NAME
-
 
 def choose_interface():
     """
@@ -44,9 +63,30 @@ last_run = 0
 # -------------------------------------------------
 # ENSURE LOG FILES EXIST (GLOBAL VALUES)
 # -------------------------------------------------
-open(SECUREGATE_LOG_FILE_STAGE1, "a").close()
-open(SECUREGATE_LOG_FILE_STAGE2, "a").close()
-open(SECUREGATE_LOG_FILE_IMPORTANT, "a").close()
+BASE_DIR = os.path.abspath("securegate_files")
+
+LOG_FILES = [
+    SECUREGATE_LOG_FILE_STAGE1,
+    SECUREGATE_LOG_FILE_STAGE2,
+    SECUREGATE_LOG_FILE_IMPORTANT
+]
+
+# 1️⃣ Check if directory exists
+if os.path.exists(BASE_DIR):
+    # Directory exists → just ensure log files
+    for log_file in LOG_FILES:
+        log_path = os.path.join(BASE_DIR, log_file)
+        if not os.path.exists(log_path):
+            open(log_path, "a").close()
+else:
+    # Directory does NOT exist → create it first
+    os.makedirs(BASE_DIR)
+
+    # Now create all log files inside it
+    for log_file in LOG_FILES:
+        log_path = os.path.join(BASE_DIR, log_file)
+        open(log_path, "a").close()
+
 
 
 def safe(data, key, default="N/A"):
@@ -68,7 +108,7 @@ def logfile(data):
     # -------------------------------------------------
     source_file = SECUREGATE_LOG_FILE_STAGE1
     destination_file = SECUREGATE_LOG_FILE_STAGE2
-
+    #print(request)
     request = {
         "Time": safe(data, "Time"),
         "Src_IP": safe(data, "Src_IP"),
