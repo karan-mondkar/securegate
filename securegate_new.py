@@ -42,13 +42,54 @@ import os
 import sys
 from dotenv import load_dotenv
 
-# -------------------------------------------------
-# 🔴 MANUAL OVERRIDE (HIGHEST PRIORITY)
-# -------------------------------------------------
-MANUAL_INTERFACE = "Wi-Fi"   # Set to None to disable manual override
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+import os
+import time
+import traceback
+
+import sys
+from dotenv import load_dotenv
+
+def get_base_dir():
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)  # EXE folder
+    return os.path.dirname(os.path.abspath(__file__))  # .py folder
+
+BASE_DIR = get_base_dir()
+
 ENV_FILE = os.path.join(BASE_DIR, "securegate.env")
+
+if not os.path.exists(ENV_FILE):
+    raise RuntimeError(f"securegate.env not found at {ENV_FILE}")
+
+load_dotenv(ENV_FILE)
+
+
+
+def log_error(message, exc=None):
+    """
+    Appends error message to securegate_error.log.
+    File is created automatically if it does not exist.
+    """
+    try:
+        LOG_FILE = os.path.join(BASE_DIR, "securegate_error.log")
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write("=" * 60 + "\n")
+            f.write(f"TIME : {time.ctime()}\n")
+            f.write(f"ERROR: {message}\n")
+
+            if exc:
+                f.write("TRACEBACK:\n")
+                f.write("".join(
+                    traceback.format_exception(type(exc), exc, exc.__traceback__)
+                ))
+
+            f.write("\n")
+
+    except Exception:
+        # Never crash the service due to logging failure
+        pass
 
 # -------------------------------------------------
 # REQUIRED CONFIG FIELDS + DEFAULTS
@@ -82,7 +123,7 @@ REQUIRED_ENV = {
     "SECUREGATE_INTERNET_TEST_PORT": "53",
 
     # ---- Packet Capture ----
-    "SECUREGATE_INTERFACE": "auto",
+    "SECUREGATE_INTERFACE": "eth0",
     "SECUREGATE_LOG_COPY_INTERVAL": "3",
 
     # ---- Files ----
@@ -101,22 +142,9 @@ REQUIRED_ENV = {
     "SECUREGATE_GUI_THEME": "arc"
 }
 
-
 def resolve_log_path(log_filename):
-    LOG_DIR = "securegate_files"
-    cwd = os.getcwd()
-
-    if os.path.basename(cwd) == LOG_DIR:
-        path = os.path.join(cwd, log_filename)
-
-    elif os.path.exists(os.path.join(cwd, LOG_DIR)):
-        path = os.path.join(cwd, LOG_DIR, log_filename)
-
-    else:
-        os.makedirs(LOG_DIR, exist_ok=True)
-        path = os.path.join(cwd, LOG_DIR, log_filename)
-
-    # Ensure file exists
+    path = os.path.join(BASE_DIR, log_filename)
+    os.makedirs(BASE_DIR, exist_ok=True)
     open(path, "a").close()
     return path
 
@@ -145,14 +173,16 @@ def validate_env():
         if key.endswith("_PORT") or "SIZE" in key or "INTERVAL" in key:
             try:
                 int(value)
-            except ValueError:
+            except ValueError as e:
+                log_error("Engine crashed during startup", e)
                 errors.append(f"Invalid integer value for {key}: {value}")
 
         # ---------- Float field ----------
         if key == "SECUREGATE_SYN_RATIO_THRESHOLD":
             try:
                 float(value)
-            except ValueError:
+            except ValueError as e:
+                log_error("Engine crashed during startup", e)
                 errors.append(f"Invalid float value for {key}: {value}")
 
     if errors:
@@ -160,8 +190,7 @@ def validate_env():
         for err in errors:
             print(f"   • {err}")
         print("\n🛑 Fix securegate.env and restart SecureGate\n")
-        #sys.exit(1)
-
+        sys.exit(1)   # ✅ MUST EXIT
 
 # -------------------------------------------------
 # MAIN CONFIG LOADER
@@ -215,10 +244,17 @@ def load_securegate_config():
     SECUREGATE_INTERNET_TEST_PORT = int(os.getenv("SECUREGATE_INTERNET_TEST_PORT"))
 
     SECUREGATE_LOG_COPY_INTERVAL = int(os.getenv("SECUREGATE_LOG_COPY_INTERVAL"))
-    SECUREGATE_LOG_FILE_STAGE1 = os.getenv("SECUREGATE_LOG_FILE_STAGE1")
+    SECUREGATE_LOG_FILE_STAGE1 = resolve_log_path(
+        os.getenv("SECUREGATE_LOG_FILE_STAGE1")
+    )
+
     SECUREGATE_LOG_FILE_STAGE2 = resolve_log_path(
-                        os.getenv("SECUREGATE_LOG_FILE_STAGE2"))
-    SECUREGATE_LOG_FILE_IMPORTANT = os.getenv("SECUREGATE_LOG_FILE_IMPORTANT")
+        os.getenv("SECUREGATE_LOG_FILE_STAGE2")
+    )
+
+    SECUREGATE_LOG_FILE_IMPORTANT = resolve_log_path(
+        os.getenv("SECUREGATE_LOG_FILE_IMPORTANT")
+    )
     SECUREGATE_KEY_FILE = os.getenv("SECUREGATE_KEY_FILE")
 
     SECUREGATE_GUI_REFRESH_INTERVAL = int(os.getenv("SECUREGATE_GUI_REFRESH_INTERVAL"))
@@ -246,15 +282,12 @@ def ensure_mysql_ready_or_exit():
     def can_connect():
         try:
             conn = mysql.connector.connect(
-                host=SECUREGATE_DB_HOST,
-                user=SECUREGATE_DB_USER,
-                password=SECUREGATE_DB_PASS,
-                port=SECUREGATE_DB_PORT,
-                connection_timeout=3
+                **build_db_config(allow_no_db=True)
             )
             conn.close()
             return True
-        except mysql.connector.Error:
+        except mysql.connector.Error as e:
+            log_error("Engine crashed during startup", e)
             return False
 
     os_name = platform.system()
@@ -308,7 +341,6 @@ def ensure_mysql_ready_or_exit():
     else:
         print(f"❌ Unsupported OS: {os_name}")
         sys.exit(1)
-
 
 load_securegate_config()
 
@@ -564,6 +596,7 @@ CREATE TABLE IF NOT EXISTS settings (
                         request_queue.put(data)
 
                     except Exception as e:
+                        log_error("Engine crashed during startup", e)
                         print(f"Error parsing line: {line}\nReason: {e}")
                         remaining_lines.append(line + '\n')  
 
@@ -574,6 +607,7 @@ CREATE TABLE IF NOT EXISTS settings (
                     f.writelines(remaining_lines)
 
         except Exception as outer_error:
+                log_error("Engine crashed during startup", outer_error)
                 print("Fatal error while reading/parsing log file:", outer_error)
 
 
@@ -608,6 +642,7 @@ CREATE TABLE IF NOT EXISTS settings (
                     # print("[INFO] Whitelist refreshed:", WHITELIST_CACHE)
 
                 except Exception as e:
+                    log_error("Engine crashed during startup", e)
                     print("[WHITELIST REFRESH ERROR]:", e)
 
 
@@ -685,6 +720,7 @@ CREATE TABLE IF NOT EXISTS settings (
                             self.network_protocol_class.ins_network_protocol(protocol,time_str)
                             #print("ins_network_protocol")
                         except Exception as e:
+                            log_error("Engine crashed during startup", e)
                             print(e)
                     except queue.Empty:
                         print(queue.Empty)
@@ -700,7 +736,8 @@ CREATE TABLE IF NOT EXISTS settings (
             sock.sendto(b'',(SECUREGATE_INTERNET_TEST_IP, SECUREGATE_INTERNET_TEST_PORT))
 
             return True
-        except Exception:
+        except Exception as e:
+            log_error("Engine crashed during startup", e)
             return False
         finally:
             sock.close()
@@ -724,6 +761,7 @@ CREATE TABLE IF NOT EXISTS settings (
                                 conn.commit()
             
             except Exception as e:
+                log_error("Engine crashed during startup", e)
                 print("[Background thread error]:", e)
     @staticmethod
     def upsert_attack(cursor, attack_type, src_ip, fingerprint, severity):
@@ -766,6 +804,7 @@ CREATE TABLE IF NOT EXISTS settings (
                 EMERGENCY_ALERT.send_email_alert(subject, message)
                 attacks.append("EMAIL_ALERT")
             except Exception as e:
+                log_error("Engine crashed during startup", e)
                 print("[EMAIL ALERT FAILED]", e)
 
 
@@ -774,6 +813,7 @@ CREATE TABLE IF NOT EXISTS settings (
                 EMERGENCY_ALERT.upload_sensitive_files_to_drive()
                 attacks.append("FILE_UPLOAD")
             except Exception as e:
+                log_error("Engine crashed during startup", e)
                 print("[FILE UPLOAD FAILED]", e)
 
             if isinstance(src_ip, str) and "," in src_ip:
@@ -832,33 +872,48 @@ CREATE TABLE IF NOT EXISTS settings (
                 )
             )
     def check_suspiciousness(self):
-        global insertion_time,timer,ipreqlimit
+        global insertion_time, timer, ipreqlimit
+
+        # ✅ ALWAYS initialize (prevents UnboundLocalError)
+        reqpertime_dict = {}
+
         try:
             request.is_request_suspicious()
 
-            cursor.execute("SELECT max_requests_per_ip from settings")
+            cursor.execute("SELECT max_requests_per_ip FROM settings")
             result = cursor.fetchone()
 
-            if result is not None:
-                json_data = result[0]  # The JSON string
-                reqpertime_dict = json.loads(json_data)  # Convert to Python dictionary
+            if result is not None and result[0]:
+                json_data = result[0]
 
-                for timer,ipreqlimit in reqpertime_dict.items():
-        
-                    time_ago = insertion_time - timedelta(minutes=int(timer))  #current time nako data insertion real time nahi honar so problem yenar
-                    #print(time_ago)
+                try:
+                    parsed = json.loads(json_data)
+                    if isinstance(parsed, dict):
+                        reqpertime_dict = parsed
+                except Exception as e:
+                    # JSON invalid → keep empty dict, do NOT crash
+                    log_error("Invalid JSON in max_requests_per_ip", e)
+
+            # ✅ SAFE: if empty or invalid, just skip this section
+            if isinstance(reqpertime_dict, dict) and reqpertime_dict:
+
+                for timer, ipreqlimit in reqpertime_dict.items():
+                    try:
+                        timer = int(timer)
+                        ipreqlimit = int(ipreqlimit)
+                    except (TypeError, ValueError):
+                        continue
+
+                    time_ago = insertion_time - timedelta(minutes=timer)
+
                     self.cursor.execute("""
-                            SELECT ip_address, COUNT(*) as ip_count
-                            FROM iprequest_junction
-                            WHERE request_time >= %s
-                            GROUP BY ip_address
-                        """, (time_ago,))
+                        SELECT ip_address, COUNT(*) as ip_count
+                        FROM iprequest_junction
+                        WHERE request_time >= %s
+                        GROUP BY ip_address
+                    """, (time_ago,))
                     ip_counts = self.cursor.fetchall()
 
-                    
-
-                    
-                        # Group by Port
                     self.cursor.execute("""
                         SELECT port_number, COUNT(*) as port_count
                         FROM iprequest_junction
@@ -867,61 +922,59 @@ CREATE TABLE IF NOT EXISTS settings (
                     """, (time_ago,))
                     port_counts = self.cursor.fetchall()
 
-
-                        # Group by Protocol
                     self.cursor.execute("""
                         SELECT protocol, COUNT(*) as network_protocol_count
                         FROM iprequest_junction
                         WHERE request_time >= %s
-                        GROUP BY port_number
+                        GROUP BY protocol
                     """, (time_ago,))
                     network_protocol_counts = self.cursor.fetchall()
 
-
-                    # Total count of all requests 
                     self.cursor.execute("""
-                        SELECT COUNT(*) FROM iprequest_junction WHERE request_time >= %s
+                        SELECT COUNT(*)
+                        FROM iprequest_junction
+                        WHERE request_time >= %s
                     """, (time_ago,))
                     total_requests = self.cursor.fetchone()[0]
-    
+
                     for x in ip_counts:
-                        if len(x) == 2:        
-                                self.checkblk("ip",x,int(ipreqlimit),timer)
+                        if len(x) == 2:
+                            self.checkblk("ip", x, ipreqlimit, timer)
+
                     for x in port_counts:
                         if len(x) == 2:
-                            self.checkblk("port",x,int(ipreqlimit),timer)
-                    
+                            self.checkblk("port", x, ipreqlimit, timer)
 
-                    #network protocol
                     for x in network_protocol_counts:
                         if len(x) == 2:
-                            self.checkblk("network_protocol",x,int(ipreqlimit),timer)
-                    
+                            self.checkblk("network_protocol", x, ipreqlimit, timer)
 
+                    self.checkblk("iprequest", total_requests, timer, timer)
 
-                    # total_requests:
-                    self.checkblk("iprequest",total_requests,int(timer),timer)
-                #unblock time
-        
+            # ================= UNBLOCK LOGIC (UNCHANGED) =================
+            self.cursor.execute("""
+                SELECT ip_address, block_time
+                FROM ip
+                WHERE is_blocked = 1 AND block_time <= %s
+            """, (datetime.now(),))
 
-                self.cursor.execute("""
-                SELECT ip_address, block_time FROM ip WHERE is_blocked = 1 AND block_time <= %s
-                """, (datetime.now(),))
-                rows = self.cursor.fetchall()
-                for ip in rows:
-                    print(ip[0])
-                    self.ips.unblock_ip(ip[0])
-                
-                
+            rows = self.cursor.fetchall()
+            for ip in rows:
+                print(ip[0])
+                self.ips.unblock_ip(ip[0])
+
         except Exception as e:
-                print(e)
-    #attack checking starts from here::::::::::::
+            log_error("Engine crashed during startup", e)
+            print(e)
+
+        # ================= ATTACK DETECTION (UNCHANGED) =================
 
         PORT_THRESHOLD = SECUREGATE_PORT_SCAN_THRESHOLD
         high_sev_port = SECUREGATE_HIGH_SEVERITY_PORTS
         MIN_PACKETS = SECUREGATE_MIN_PACKETS
         mass_scan_ports = SECUREGATE_MASS_SCAN_PORTS
         SYN_RATIO_THRESHOLD = SECUREGATE_SYN_RATIO_THRESHOLD
+
         query = """
         SELECT 
             request_time,
@@ -955,7 +1008,7 @@ CREATE TABLE IF NOT EXISTS settings (
         print(f"[INFO] Loaded {len(detection_packets)} packets")
 
         # ================= PORT SCAN =================
-        ip_ports = defaultdict(set)   #unique port per ip
+        ip_ports = defaultdict(set)
 
         for pkt in detection_packets:
             if pkt["dst_port"] is not None:
@@ -1033,6 +1086,7 @@ CREATE TABLE IF NOT EXISTS settings (
                     fingerprint=fingerprint,
                     severity=severity
                 )
+
         connection.commit()
 
 
@@ -1090,6 +1144,7 @@ CREATE TABLE IF NOT EXISTS settings (
                 try:
                     EMERGENCY_ALERT.honeypot_diversion(attacker_ip, divert=False)
                 except Exception as e:
+                    log_error("Engine crashed during startup", e)
                     print("[HONEYPOT REVERT FAILED]", e)
 
             # 🔁 File restore
@@ -1097,6 +1152,7 @@ CREATE TABLE IF NOT EXISTS settings (
                 try:
                     EMERGENCY_ALERT.restore_permissions()  # or your restore logic
                 except Exception as e:
+                    log_error("Engine crashed during startup", e)
                     print("[FILE RESTORE FAILED]", e)
 
             if "BLOCK_IP" in actions:
@@ -1121,6 +1177,7 @@ CREATE TABLE IF NOT EXISTS settings (
                             pass
 
                 except Exception as e:
+                    log_error("Engine crashed during startup", e)
                     print("[IP UNBLOCK CHECK FAILED]", e)
 
 
@@ -1160,6 +1217,7 @@ class IPS:
                 print("counter is :-",counter_temp)
                 #print("ins ip completed")
         except Exception as e:
+            log_error("Engine crashed during startup", e)
             print("error insertion :-",e)
             
     def block_ip(self, ip_address, blkps):
@@ -1174,6 +1232,7 @@ class IPS:
                         print(f"[BLOCKED SECTION:] {ip_address} is whitelisted, skipping block.")
                         return
             except Exception as e:
+                log_error("Engine crashed during startup", e)
                 print(f"[!] Error fetching whitelist: {e}")
 
             # NOTE: Proceed even if IP is in block_list to ensure firewall sync
@@ -1238,6 +1297,7 @@ class IPS:
                 print(f"[+] IP {ip_address} blocked successfully.")
 
             except Exception as e:
+                log_error("Engine crashed during startup", e)
                 print(f"[!] Error blocking IP {ip_address}: {e}")
 
     def unblock_ip(self, ip_address):
@@ -1287,6 +1347,7 @@ class IPS:
                 print(f"[+] IP {ip_address} unblocked and DB updated.")
 
             except Exception as e:
+                log_error("Engine crashed during startup", e)
                 print(f"[!] Critical Error unblocking IP {ip_address}: {e}")            
     def get_country(self,ip):
         try:
@@ -1294,6 +1355,7 @@ class IPS:
             data = response.json()
             return data.get("country", "Unknown")
         except Exception as e:
+            log_error("Engine crashed during startup", e)
             print(f"Error: {str(e)}")
     
         
@@ -1318,6 +1380,7 @@ class IPS:
             return {ip.strip() for ip in row[0].split(",") if ip.strip()}
 
         except Exception as e:
+            log_error("Engine crashed during startup", e)
             print("[WHITELIST ERROR]:", e)
             return set()
 
@@ -1333,6 +1396,7 @@ class IPS:
             return {row[0] for row in cursor.fetchall()}
 
         except Exception as e:
+            log_error("Engine crashed during startup", e)
             print("[BLACKLIST ERROR]:", e)
             return set()
 
@@ -1410,6 +1474,7 @@ class IPS:
             connection.commit()
 
         except Exception as e:
+            log_error("Engine crashed during startup", e)
             print("[WHITELIST ERROR]:", e)
 
     def blacklist_ip(action, ip=None):
@@ -1426,7 +1491,7 @@ class IPS:
 
             try:
                 ip_list = json.loads(raw)
-            except Exception:
+            except Exception as e:
                 ip_list = []
 
             if action == "add" and ip:
@@ -1450,6 +1515,7 @@ class IPS:
             return ip_list  # ✅ return updated list
 
         except Exception as e:
+            log_error("Engine crashed during startup", e)
             print("[BLACKLIST ERROR]:", e)
             return []        # ✅ NEVER None
 
@@ -1458,7 +1524,8 @@ class IPS:
         try:
             ip = ipaddress.ip_address(ip_str.strip())
             return str(ip)   # canonical form
-        except ValueError:
+        except ValueError as e:
+            log_error("Engine crashed during startup", e)
             return None
 
 
@@ -1563,6 +1630,7 @@ class REQUEST:
             return False
 
         except Exception as e:
+            log_error("Engine crashed during startup", e)
             print("[ERROR in suspicious check]:", e)
             return False
 
@@ -1653,15 +1721,11 @@ class IPREQUEST:
             self.connection.commit()
 
         except Exception as e:
+            log_error("Engine crashed during startup", e)
             print("[DB INSERT ERROR]", e)
 
 
     
-    def is_iprequest_suspicious(count,limit):
-            pass
-    def securegate_response(ipdata,limit,time_interval):        
-            pass 
-
     
     '''
     def checking(self,ip,request):
@@ -1804,6 +1868,7 @@ class EMERGENCY_ALERT:
                 return None
 
         except Exception as e:
+            log_error("Engine crashed during startup", e)
             print(f"[!] Database error: {e}")
             return None
 
@@ -1839,6 +1904,7 @@ class EMERGENCY_ALERT:
             print("Response:", response)
 
         except Exception as e:
+            log_error("Engine crashed during startup", e)
             print(f"[!] Failed to send email: {e}")
     
 
@@ -1870,6 +1936,7 @@ class EMERGENCY_ALERT:
                     print("[UPLOAD ERROR]", result.stderr)
 
             except Exception as e:
+                log_error("Engine crashed during startup", e)
                 print("[EXCEPTION]", e)
             
             print(f"[+] All sensitive files uploaded to '{upload_folder}' successfully!")
@@ -1907,12 +1974,14 @@ class EMERGENCY_ALERT:
                     print(f"[INFO] Original file removed after encryption")
 
                 except Exception as e:
+                    log_error("Engine crashed during startup", e)
                     print(f"[ERROR] Encryption failed: {e}")
             else:
                 print(f"[INFO] File not found: {sensitive_folder}")
 
 
         except Exception as e:
+            log_error("Engine crashed during startup", e)
             print(f"[!] Error: {e}")  
 
 
@@ -1936,6 +2005,7 @@ class EMERGENCY_ALERT:
                 return
             honeypot_ip = row[0].split(",")[0].strip()
         except Exception as e:
+            log_error("Engine crashed during startup", e)
             print("[!] Honeypot fetch failed:", e)
             return
 
@@ -2061,11 +2131,6 @@ from datetime import datetime
 import mysql.connector
 
    
-
-
-
-
-
 
 
 

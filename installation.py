@@ -10,22 +10,80 @@ from dotenv import load_dotenv
 # ==================================================
 # CONFIG
 # ==================================================
+import os
+import time
+import traceback
 
-BASE_DIR = os.path.abspath("securegate_files")
 
-ENGINE_SCRIPT = os.path.join(BASE_DIR, "securegate_new.py")
-MONITOR_SCRIPT = os.path.join(BASE_DIR, "network_monitor.py")
-GUI_SCRIPT = os.path.join(BASE_DIR, "gui.py")
+def get_current_directory():
+    """
+    Returns the directory where the installer (py or exe) is located.
+    Works on Windows, Linux, Python, and PyInstaller EXE.
+    """
+    if getattr(sys, "frozen", False):
+        # Running as EXE
+        return os.path.dirname(sys.executable)
+    else:
+        # Running as Python script
+        return os.path.dirname(os.path.abspath(__file__))
+
+
+BASE_DIR = get_current_directory()
+LOG_FILE = os.path.join(BASE_DIR, "securegate_error.log")
+
+def log_error(message, exc=None):
+    """
+    Appends error message to securegate_error.log.
+    File is created automatically if it does not exist.
+    """
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write("=" * 60 + "\n")
+            f.write(f"TIME : {time.ctime()}\n")
+            f.write(f"ERROR: {message}\n")
+
+            if exc:
+                f.write("TRACEBACK:\n")
+                f.write("".join(
+                    traceback.format_exception(type(exc), exc, exc.__traceback__)
+                ))
+
+            f.write("\n")
+
+    except Exception:
+        # Never crash the service due to logging failure
+        pass
+
+
+
+
+
+
+import sys
+import sys
+import datetime
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ENV_FILE = os.path.join(BASE_DIR, "securegate.env")
 
-ENGINE_SERVICE = "securegate-engine"
-MONITOR_SERVICE = "securegate-monitor"
 # ==================================================
 # ENV CONFIG (INSTALLER-ONLY)
 # ==================================================
 
 REQUIRED_ENV = {
+    "SECUREGATE_BASE_DIR": BASE_DIR.replace("\\", "/"),
     "SECUREGATE_DB_HOST": "localhost",
     "SECUREGATE_DB_PORT": "3306",
     "SECUREGATE_DB_USER": "root",
@@ -50,7 +108,7 @@ REQUIRED_ENV = {
 
     "SECUREGATE_INTERFACE": "eth0",
     "SECUREGATE_LOG_COPY_INTERVAL": "3",
-
+    "SECUREGATE_LOG_FILE_STAGE1": "securegate_detailed_log1.json",
     "SECUREGATE_LOG_FILE_STAGE2": "securegate_detailed_log2.json",
     "SECUREGATE_LOG_FILE_IMPORTANT": "imp_detailed_log.json",
     "SECUREGATE_KEY_FILE": "securegate.key",
@@ -62,6 +120,7 @@ REQUIRED_ENV = {
     "SECUREGATE_GUI_ICON": "securegate_image.ico",
     "SECUREGATE_GUI_BANNER": "securegate_.png",
     "SECUREGATE_GUI_THEME": "arc"
+
 }
 
 
@@ -78,7 +137,8 @@ def env(key, default=None, required=False, cast=None):
     if cast:
         try:
             return cast(val)
-        except Exception:
+        except Exception as e:
+            log_error("Engine crashed during startup", e)    
             raise RuntimeError(f"Invalid value for {key}: {val}")
 
     return val
@@ -101,19 +161,28 @@ def build_db_config(allow_no_db=False):
     return cfg
 
 
-
 def create_env_file_once():
-    os.makedirs(BASE_DIR, exist_ok=True)
+    # If env already exists, DO NOTHING
+    if os.path.exists(ENV_FILE):
+        print("✔ securegate.env already exists")
+        return
 
-    with open(ENV_FILE, "w") as f:
-        f.write("# SecureGate Environment Configuration\n\n")
+    with open(ENV_FILE, "w", encoding="utf-8") as f:
+        f.write("# SecureGate Environment Configuration\n")
+        f.write("# Auto-generated during first installation\n\n")
+
         for k, v in REQUIRED_ENV.items():
+            # Normalize paths for cross-platform safety
+            if k == "SECUREGATE_BASE_DIR":
+                v = str(v).replace("\\", "/")
+            else:
+                v = str(v)
+
             f.write(f"{k}={v}\n")
 
     print("✅ securegate.env created")
     print("⚠️  Review the file and re-run installer")
-    sys.exit(0)
-
+    
 def validate_env_file_or_exit():
     load_dotenv(ENV_FILE)
 
@@ -132,7 +201,8 @@ def validate_env_file_or_exit():
         if key == "SECUREGATE_SYN_RATIO_THRESHOLD":
             try:
                 float(val)
-            except Exception:
+            except Exception as e:
+                log_error("Engine crashed during startup", e)
                 errors.append(f"Invalid float: {key}={val}")
 
     if errors:
@@ -165,7 +235,8 @@ def open_env_file_for_edit():
             subprocess.call(["nano", ENV_FILE])
         else:
             print(f"📄 Please edit manually: {ENV_FILE}")
-    except Exception:
+    except Exception as e:
+        log_error("Engine crashed during startup", e)
         print(f"📄 Please edit manually: {ENV_FILE}")
 
 def confirm_env_or_exit():
@@ -202,6 +273,13 @@ LIBRARIES = {
     "dotenv": "python-dotenv"
 }
 
+import os
+import sys
+
+# Force the working directory to the script's actual location
+
+
+
 def module_installed(name):
     return importlib.util.find_spec(name) is not None
 
@@ -209,7 +287,9 @@ def install_package(pkg):
     print(f"⬇ Installing {pkg}")
     try:
         subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as e:
+        log_error("Engine crashed during startup", e)
+        
         subprocess.check_call([
             sys.executable, "-m", "pip", "install",
             "--break-system-packages", pkg
@@ -237,7 +317,6 @@ FILES = {
 }
 
 def download_files():
-    os.makedirs(BASE_DIR, exist_ok=True)
     print("⬇ Downloading SecureGate files\n")
 
     for name, url in FILES.items():
@@ -261,6 +340,15 @@ def download_files():
 # ==================================================
 import mysql.connector
 import time
+# ==================================================
+# UNICODE FIX (ADD THIS)
+# ==================================================
+if sys.stdout.encoding != 'utf-8':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
+
 def ensure_mysql_ready_or_exit():
     import sys, time, subprocess, platform
     import mysql.connector
@@ -272,7 +360,8 @@ def ensure_mysql_ready_or_exit():
             )
             conn.close()
             return True
-        except mysql.connector.Error:
+        except mysql.connector.Error as e:
+            log_error("Engine crashed during startup", e)
             return False
 
     os_name = platform.system()
@@ -361,83 +450,38 @@ WantedBy=multi-user.target
     subprocess.call(["systemctl", "start", name])
 
     print(f"✔ Created service: {name}")
-def create_windows_service(name, script_path):
-    import subprocess
-    import sys
-    import os
+    
+    
 
-    python = sys.executable
-    task_name = name
 
-    # Check if task already exists
-    check = subprocess.run(
-        f'schtasks /query /tn "{task_name}"',
-        shell=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
-    )
 
-    if check.returncode == 0:
-        print(f"✔ Task '{task_name}' already exists")
-        return
+import subprocess
+import sys
+import os
 
-    print(f"🪟 Creating background service (Task Scheduler): {task_name}")
 
-    command = (
-        f'schtasks /create '
-        f'/tn "{task_name}" '
-        f'/tr "\\"{python}\\" \\"{script_path}\\"" '
-        f'/sc onstart '
-        f'/ru SYSTEM '
-        f'/rl HIGHEST '
-        f'/f'
-    )
+ENGINE_SERVICE = "securegate-engine"
+MONITOR_SERVICE = "securegate-monitor"
 
-    result = subprocess.run(command, shell=True)
-
-    if result.returncode != 0:
-        print("❌ Failed to create scheduled task")
-        sys.exit(1)
-
-    print(f"✔ Service-like task created: {task_name}")
-    print("▶ It will start automatically at system boot")
-
-    # Start immediately
-    subprocess.run(f'schtasks /run /tn "{task_name}"', shell=True)
+ENGINE_SCRIPT = os.path.join(BASE_DIR, "securegate_new.py")
+MONITOR_SCRIPT = os.path.join(BASE_DIR, "network_monitor.py")
 
 def ensure_services():
     os_name = platform.system()
-
+    
     if os_name == "Linux":
         create_linux_service(ENGINE_SERVICE, ENGINE_SCRIPT)
         create_linux_service(MONITOR_SERVICE, MONITOR_SCRIPT)
 
     elif os_name == "Windows":
-        create_windows_service(ENGINE_SERVICE, ENGINE_SCRIPT)
-        create_windows_service(MONITOR_SERVICE, MONITOR_SCRIPT)
-
-
+        pass
+        # Pass the global script paths defined at the top
+        # Change the task_run line to this to catch errors:
+        #create_windows_service(ENGINE_SERVICE, ENGINE_SCRIPT)
+        #create_windows_service(MONITOR_SERVICE, MONITOR_SCRIPT)
 # ==================================================
 # GUI
 # ==================================================
-def launch_gui():
-    print("\n🖥 Launching SecureGate GUI\n")
-
-    if platform.system() == "Linux":
-        subprocess.Popen([
-            "xterm", "-hold", "-e",
-            f"{sys.executable} {GUI_SCRIPT}"
-        ])
-
-    elif platform.system() == "Windows":
-        # Open GUI in a new window (no console dependency)
-        subprocess.Popen(
-            [sys.executable, GUI_SCRIPT],
-            creationflags=subprocess.CREATE_NEW_CONSOLE
-        )
-
-    else:
-        print("⚠ GUI launch not supported on this OS")
 
 # ==================================================
 # MAIN
@@ -449,8 +493,13 @@ def main():
     ensure_env_ready()
     ensure_mysql_ready_or_exit()
     ensure_services()
-    launch_gui()
     print("\n✅ SecureGate fully operational\n")
 
 if __name__ == "__main__":
-    main()
+    try:
+        print("🚀 Starting SecureGate installer...\n")
+        main()
+    except Exception as e:
+        log_error("Installer crashed", e)
+        print("❌ Installer failed. Check securegate_error.log")
+        sys.exit(1)

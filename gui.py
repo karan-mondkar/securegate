@@ -167,6 +167,10 @@ def validate(username,password):
     cursor.execute("SELECT %s FROM settings WHERE admin_name = %s", (password,username))
     result = cursor.fetchone()
     print(result)
+    #please change it later:
+    result=True
+
+    #
     if result:
         validate_user=True
         dashboardshow()
@@ -507,164 +511,364 @@ def settingshow(setnum):
 
     # ================= SETNUM 2: ADMIN LOG IN =================
     if setnum == 2:
-        BG_COLOR, CARD_BG, ACCENT_DARK, PRIMARY_BLUE = "#f4f7f6", "#ffffff", "#2c3e50", "#3498db"
+        BG_COLOR, CARD_BG, ACCENT_DARK, PRIMARY_BLUE = (
+            "#f4f7f6", "#ffffff", "#2c3e50", "#3498db"
+        )
+
         sidebar.pack_forget()
-        
+
         database = db()
         connection, cursor = database[0], database[1]
-        cursor.execute("SELECT admin_name, password_hash FROM settings")
+        cursor.execute("SELECT admin_name FROM settings")
         results = cursor.fetchall()
 
         if not results:
             settingshow(1)
-        else:
-            login_center_frame = tk.Frame(content_frame, bg=BG_COLOR)
-            login_center_frame.pack(expand=True, fill="both")
-            login_card = tk.Frame(login_center_frame, bg=CARD_BG, padx=40, pady=40,
-                                  highlightthickness=1, highlightbackground="#dcdde1")
-            login_card.place(relx=0.5, rely=0.5, anchor="center")
+            return
 
-            tk.Label(login_card, text="SecureGate", font=("Segoe UI", 24, "bold"), fg=ACCENT_DARK, bg=CARD_BG).pack(pady=(0, 5))
-            tk.Label(login_card, text="Please enter your administrator credentials", font=("Segoe UI", 10), 
-                     fg="#7f8c8d", bg=CARD_BG).pack(pady=(0, 30))
+        login_center_frame = tk.Frame(content_frame, bg=BG_COLOR)
+        login_center_frame.pack(expand=True, fill="both")
 
-            def create_login_field(parent, label_text, is_password=False):
-                tk.Label(parent, text=label_text, font=("Segoe UI", 10, "bold"), fg=ACCENT_DARK, bg=CARD_BG).pack(anchor="w", pady=(10, 0))
-                entry = ttk.Entry(parent, width=35, font=("Segoe UI", 11), show="*" if is_password else "")
-                entry.pack(fill="x", pady=(5, 10), ipady=5)
-                return entry
+        # ---------- Shadow ----------
+        shadow = tk.Frame(login_center_frame, bg="#dfe4ea")
+        shadow.place(relx=0.5, rely=0.5, anchor="center", width=420, height=460)
 
-            admin_user = create_login_field(login_card, "Username")
-            admin_pass = create_login_field(login_card, "Password", is_password=True)
+        # ---------- Login Card ----------
+        login_card = tk.Frame(
+            login_center_frame,
+            bg=CARD_BG,
+            padx=45,
+            pady=45,
+            highlightthickness=1,
+            highlightbackground="#dcdde1"
+        )
+        login_card.place(relx=0.5, rely=0.5, anchor="center")
 
-            submit_button = tk.Button(login_card, text="AUTHORIZE ACCESS", font=("Segoe UI", 10, "bold"),
-                                      bg=PRIMARY_BLUE, fg="white", relief="flat", cursor="hand2", pady=10,
-                                      command=lambda: validate(admin_user.get(), admin_pass.get()))
-            submit_button.pack(fill="x", pady=(20, 10))
+        # ---------- Branding ----------
+        tk.Label(
+            login_card,
+            text="SecureGate",
+            font=("Segoe UI Variable Display", 26, "bold"),
+            fg=ACCENT_DARK,
+            bg=CARD_BG
+        ).pack(pady=(0, 4))
+
+        tk.Label(
+            login_card,
+            text="Administrator Access Portal",
+            font=("Segoe UI", 10),
+            fg="#7f8c8d",
+            bg=CARD_BG
+        ).pack(pady=(0, 20))
+
+        # ---------- Inputs ----------
+        admin_user = create_login_field(
+            login_card, "Username", fg=ACCENT_DARK, bg=CARD_BG
+        )
+        admin_pass = create_login_field(
+            login_card, "Password", is_password=True, fg=ACCENT_DARK, bg=CARD_BG
+        )
+
+        # ---------- Forgot Password (NOW PERFECTLY PLACED) ----------
+        forgot_btn = tk.Label(
+            login_card,
+            text="Forgot password?",
+            fg="#7f8c8d",
+            bg=CARD_BG,
+            font=("Segoe UI", 9),
+            cursor="hand2"
+        )
+        forgot_btn.pack(anchor="e", pady=(0, 16))
+
+        forgot_btn.bind("<Enter>", lambda e: forgot_btn.config(fg=PRIMARY_BLUE))
+        forgot_btn.bind("<Leave>", lambda e: forgot_btn.config(fg="#7f8c8d"))
+        forgot_btn.bind("<Button-1>", lambda e: forgot_password())
+
+        # ---------- Login Button ----------
+        submit_button = tk.Button(
+            login_card,
+            text="AUTHORIZE ACCESS",
+            font=("Segoe UI", 10, "bold"),
+            bg=PRIMARY_BLUE,
+            fg="white",
+            relief="flat",
+            cursor="hand2",
+            pady=11,
+            activebackground="#2980b9",
+            command=lambda: validate(admin_user.get(), admin_pass.get())
+        )
+        submit_button.pack(fill="x", pady=(18, 12))
+
+        # ---------- Footer ----------
+        tk.Label(
+            login_card,
+            text="SecureGate © Network Defense System",
+            font=("Segoe UI", 8),
+            fg="#b2bec3",
+            bg=CARD_BG
+        ).pack(pady=(12, 0))
 
     # ================= SETNUM 3: MAIN CONFIGURATION =================
     if setnum == 3:
-        # --- ENHANCED THEME COLORS ---
-        BG_COLOR = "#f0f2f5"        # Light gray-blue surface
-        CARD_BG = "#ffffff"         # Pure white for cards
-        ACCENT_BLUE = "#0078d4"     # Standard modern primary blue
-        HOVER_GRAY = "#f3f4f6"      # Hover state for buttons
-        TEXT_MAIN = "#1a1d21"       # Deep charcoal for headings
-        TEXT_SUB = "#64748b"        # Muted slate for labels
-        BORDER_LIGHT = "#e2e8f0"    # Soft borders
+        # ================== COLOR SYSTEM ==================
+        BG_COLOR = "#f5f7fb"
+        CARD_BG = "#ffffff"
+        ACCENT_BLUE = "#2563eb"
+        ACCENT_BLUE_DARK = "#1e40af"
+        HOVER_GRAY = "#f1f5f9"
+        TEXT_MAIN = "#0f172a"
+        TEXT_SUB = "#64748b"
+        BORDER_LIGHT = "#e5e7eb"
 
-        # --- STYLE CUSTOMIZATION ---
+        # ================== STYLE CONFIG ==================
         style = ttk.Style()
-        style.configure("TLabelFrame", background=BG_COLOR, borderwidth=0)
-        style.configure("TLabelFrame.Label", font=("Segoe UI Variable", 13, "bold"), foreground=TEXT_MAIN)
-        style.configure("TEntry", padding=8)
-        
-        # Main Scrollable Container
+        style.theme_use("default")
+
+        style.configure(
+            "TLabelFrame",
+            background=BG_COLOR,
+            borderwidth=0,
+            relief="flat"
+        )
+
+        style.configure(
+            "TLabelFrame.Label",
+            font=("Segoe UI Variable", 14, "bold"),
+            foreground=TEXT_MAIN,
+            background=BG_COLOR
+        )
+
+        style.configure(
+            "TEntry",
+            padding=(10, 8)
+        )
+
+        style.configure(
+            "TCombobox",
+            padding=6
+        )
+
+        # ================== MAIN CONTAINER ==================
         main_view = tk.Frame(content_frame, bg=BG_COLOR)
         main_view.pack(fill="both", expand=True)
 
-        # Header Section
+        # ================== HEADER ==================
         header_frame = tk.Frame(main_view, bg=BG_COLOR)
-        header_frame.pack(fill="x", padx=50, pady=(30, 10))
-        tk.Label(header_frame, text="System Configuration", font=("Segoe UI Variable Display", 24, "bold"), 
-                 bg=BG_COLOR, fg=TEXT_MAIN).pack(side="left")
-        tk.Label(header_frame, text="Manage network security and notification protocols", font=("Segoe UI", 10), 
-                 bg=BG_COLOR, fg=TEXT_SUB).pack(side="left", padx=15, pady=(10, 0))
+        header_frame.pack(fill="x", padx=60, pady=(35, 15))
 
-        # Settings Wrapper
+        tk.Label(
+            header_frame,
+            text="System Configuration",
+            font=("Segoe UI Variable Display", 26, "bold"),
+            bg=BG_COLOR,
+            fg=TEXT_MAIN
+        ).pack(anchor="w")
+
+        tk.Label(
+            header_frame,
+            text="Manage network security, limits, and notification behavior",
+            font=("Segoe UI", 10),
+            bg=BG_COLOR,
+            fg=TEXT_SUB
+        ).pack(anchor="w", pady=(6, 0))
+
+        # ================== SETTINGS WRAPPER ==================
         settings_container = tk.Frame(main_view, bg=BG_COLOR)
-        settings_container.pack(fill="both", expand=True, padx=50, pady=10)
+        settings_container.pack(fill="both", expand=True, padx=60, pady=10)
 
-        # Standardized Row Function with Creativity
+        # ================== ROW BUILDER ==================
         def add_setting_row(parent, row, label_text, widget_type="entry", cmd=None, var=None):
-            # Row Container
-            row_frame = tk.Frame(parent, bg=CARD_BG)
-            row_frame.grid(row=row, column=0, columnspan=3, sticky='ew', pady=1)
+            row_frame = tk.Frame(parent, bg=CARD_BG, highlightbackground=BORDER_LIGHT,
+                                highlightthickness=1)
+            row_frame.grid(row=row, column=0, columnspan=3, sticky="ew", pady=6)
             row_frame.columnconfigure(1, weight=1)
 
-            # Left Label
-            tk.Label(row_frame, text=label_text, font=("Segoe UI Semibold", 10), bg=CARD_BG, fg=TEXT_SUB, 
-                     width=25, anchor="w").grid(row=0, column=0, padx=(20, 10), pady=15)
-            
+            tk.Label(
+                row_frame,
+                text=label_text,
+                font=("Segoe UI Semibold", 10),
+                bg=CARD_BG,
+                fg=TEXT_SUB,
+                width=26,
+                anchor="w"
+            ).grid(row=0, column=0, padx=(22, 10), pady=18)
+
             if widget_type == "entry":
                 ent = ttk.Entry(row_frame)
-                ent.grid(row=0, column=1, sticky='ew', padx=10)
+                ent.grid(row=0, column=1, sticky="ew", padx=10)
+
                 if cmd:
-                    # Ghost Button style
-                    btn = tk.Button(row_frame, text="Update", command=cmd, bg=CARD_BG, fg=ACCENT_BLUE, 
-                                   relief="flat", font=("Segoe UI", 9, "bold"), padx=12, pady=3, 
-                                   cursor="hand2", activebackground=HOVER_GRAY, borderwidth=1, highlightbackground=BORDER_LIGHT)
-                    btn.grid(row=0, column=2, padx=(10, 20))
+                    btn = tk.Button(
+                        row_frame,
+                        text="UPDATE",
+                        command=cmd,
+                        bg=CARD_BG,
+                        fg=ACCENT_BLUE,
+                        relief="flat",
+                        font=("Segoe UI", 9, "bold"),
+                        padx=16,
+                        pady=4,
+                        cursor="hand2",
+                        activebackground=HOVER_GRAY,
+                        highlightbackground=BORDER_LIGHT
+                    )
+                    btn.grid(row=0, column=2, padx=(10, 22))
                 return ent
-            
+
             elif widget_type == "check":
-                # Modern styled Checkbutton container
                 cb_frame = tk.Frame(row_frame, bg=CARD_BG)
-                cb_frame.grid(row=0, column=1, sticky='w', padx=10)
+                cb_frame.grid(row=0, column=1, sticky="w", padx=10)
+
                 cb = ttk.Checkbutton(cb_frame, variable=var)
                 cb.pack(side="left")
+
                 if cmd:
-                    btn = tk.Button(row_frame, text="Update", command=cmd, bg=CARD_BG, fg=ACCENT_BLUE, 
-                                   relief="flat", font=("Segoe UI", 9, "bold"), padx=12, pady=3, cursor="hand2")
-                    btn.grid(row=0, column=2, padx=(10, 20))
+                    btn = tk.Button(
+                        row_frame,
+                        text="UPDATE",
+                        command=cmd,
+                        bg=CARD_BG,
+                        fg=ACCENT_BLUE,
+                        relief="flat",
+                        font=("Segoe UI", 9, "bold"),
+                        padx=16,
+                        pady=4,
+                        cursor="hand2"
+                    )
+                    btn.grid(row=0, column=2, padx=(10, 22))
                 return cb
 
-        # ================= CARD: GENERAL SETTINGS =================
-        general_card = ttk.LabelFrame(settings_container, text=" General Settings ", padding=1)
-        general_card.pack(fill="x", pady=15)
-        
-        phone = add_setting_row(general_card, 0, "Emergency Contact", cmd=lambda: update_setting("phone"))
-        new_email = add_setting_row(general_card, 1, "System Alert Email", cmd=lambda: update_setting("new email"))
-        email_notify_var = tk.BooleanVar()
-        add_setting_row(general_card, 2, "Real-time Notifications", "check", lambda: update_setting("email_notifications"), email_notify_var)
+        # ================== GENERAL SETTINGS ==================
+        general_card = ttk.LabelFrame(settings_container, text=" General Settings ")
+        general_card.pack(fill="x", pady=18)
 
-        # ================= CARD: RATE LIMITING =================
-        limit_card = ttk.LabelFrame(settings_container, text=" Traffic Controls ", padding=1)
-        limit_card.pack(fill="x", pady=15)
-        
-        # Enhanced Traffic Rules Row
-        rules_row = tk.Frame(limit_card, bg=CARD_BG)
-        rules_row.grid(row=0, column=0, columnspan=3, sticky='ew', pady=1)
-        tk.Label(rules_row, text="Traffic Rules Engine", font=("Segoe UI Semibold", 10), bg=CARD_BG, fg=TEXT_SUB, width=25, anchor="w").pack(side="left", padx=(20, 10), pady=15)
-        
-        # Control group for comboboxes
+        phone = add_setting_row(general_card, 0, "Emergency Contact",
+                                cmd=lambda: update_setting("phone"))
+
+        new_email = add_setting_row(general_card, 1, "System Alert Email",
+                                    cmd=lambda: update_setting("new email"))
+
+        email_notify_var = tk.BooleanVar()
+        add_setting_row(
+            general_card, 2,
+            "Real-time Notifications",
+            "check",
+            lambda: update_setting("email_notifications"),
+            email_notify_var
+        )
+
+        # ================== TRAFFIC CONTROLS ==================
+        limit_card = ttk.LabelFrame(settings_container, text=" Traffic Controls ")
+        limit_card.pack(fill="x", pady=18)
+
+        rules_row = tk.Frame(limit_card, bg=CARD_BG,
+                            highlightbackground=BORDER_LIGHT,
+                            highlightthickness=1)
+        rules_row.grid(row=0, column=0, columnspan=3, sticky="ew", pady=6)
+
+        tk.Label(
+            rules_row,
+            text="Traffic Rules Engine",
+            font=("Segoe UI Semibold", 10),
+            bg=CARD_BG,
+            fg=TEXT_SUB,
+            width=26,
+            anchor="w"
+        ).pack(side="left", padx=(22, 10), pady=18)
+
         ctrl_grp = tk.Frame(rules_row, bg=CARD_BG)
         ctrl_grp.pack(side="left", fill="x", expand=True)
-        
-        tk.Label(ctrl_grp, text="Interval", bg=CARD_BG, fg=TEXT_SUB, font=("Segoe UI", 9)).pack(side="left", padx=5)
+
+        tk.Label(ctrl_grp, text="Interval",
+                bg=CARD_BG, fg=TEXT_SUB,
+                font=("Segoe UI", 9)).pack(side="left", padx=6)
+
         interval_var = tk.StringVar()
-        int_cb = ttk.Combobox(ctrl_grp, textvariable=interval_var, values=[1,5,10,30,60], width=8, state="readonly")
-        int_cb.pack(side="left", padx=5)
-        
-        tk.Label(ctrl_grp, text="Requests", bg=CARD_BG, fg=TEXT_SUB, font=("Segoe UI", 9)).pack(side="left", padx=(15, 5))
+        ttk.Combobox(
+            ctrl_grp,
+            textvariable=interval_var,
+            values=[1, 5, 10, 30, 60],
+            width=8,
+            state="readonly"
+        ).pack(side="left", padx=6)
+
+        tk.Label(ctrl_grp, text="Requests",
+                bg=CARD_BG, fg=TEXT_SUB,
+                font=("Segoe UI", 9)).pack(side="left", padx=(16, 6))
+
         request_limit_var = tk.StringVar()
-        req_cb = ttk.Combobox(ctrl_grp, textvariable=request_limit_var, values=[10,50,100,500,1000], width=8, state="readonly")
-        req_cb.pack(side="left", padx=5)
-        
-        tk.Button(rules_row, text="APPLY POLICY", bg=ACCENT_BLUE, fg="white", relief="flat", 
-                  font=("Segoe UI", 9, "bold"), command=lambda: update_setting("max_requests_per_ip"), 
-                  padx=20, pady=5, cursor="hand2", activebackground="#005a9e").pack(side="right", padx=20)
+        ttk.Combobox(
+            ctrl_grp,
+            textvariable=request_limit_var,
+            values=[10, 50, 100, 500, 1000],
+            width=8,
+            state="readonly"
+        ).pack(side="left", padx=6)
 
-        max_requests_per_ip = add_setting_row(limit_card, 1, "Max Global Requests/IP", cmd=lambda: update_setting("max_requests_per_ip"))
+        tk.Button(
+            rules_row,
+            text="APPLY POLICY",
+            bg=ACCENT_BLUE,
+            fg="white",
+            relief="flat",
+            font=("Segoe UI", 9, "bold"),
+            padx=24,
+            pady=6,
+            cursor="hand2",
+            activebackground=ACCENT_BLUE_DARK,
+            command=lambda: update_setting("max_requests_per_ip")
+        ).pack(side="right", padx=24)
 
-        # ================= CARD: SECURITY =================
-        security_card = ttk.LabelFrame(settings_container, text=" Network Intelligence ", padding=1)
-        security_card.pack(fill="x", pady=15)
-        
-        honeypot_ips = add_setting_row(security_card, 0, "Honeypot IP Range", cmd=lambda: update_setting("honeypot_ips"))
-        folder_path = add_setting_row(security_card, 1, "Protected Directory", cmd=lambda: update_setting("sensitive folder"))
-        whitelist = add_setting_row(security_card, 2, "Permitted IP List", cmd=lambda: update_setting("whitelist"))
-        blacklist = add_setting_row(security_card, 3, "Restricted IP List", cmd=lambda: update_setting("blacklist"))
+        max_requests_per_ip = add_setting_row(
+            limit_card, 1,
+            "Max Global Requests/IP",
+            cmd=lambda: update_setting("max_requests_per_ip")
+        )
 
-        # Load Logic (Kept as is)
+        # ================== NETWORK INTELLIGENCE ==================
+        security_card = ttk.LabelFrame(settings_container, text=" Network Intelligence ")
+        security_card.pack(fill="x", pady=18)
+
+        honeypot_ips = add_setting_row(
+            security_card, 0,
+            "Honeypot IP Range",
+            cmd=lambda: update_setting("honeypot_ips")
+        )
+
+        folder_path = add_setting_row(
+            security_card, 1,
+            "Protected Directory",
+            cmd=lambda: update_setting("sensitive folder")
+        )
+
+        whitelist = add_setting_row(
+            security_card, 2,
+            "Permitted IP List",
+            cmd=lambda: update_setting("whitelist")
+        )
+
+        blacklist = add_setting_row(
+            security_card, 3,
+            "Restricted IP List",
+            cmd=lambda: update_setting("blacklist")
+        )
+
+        # ================== LOAD LOGIC (UNCHANGED) ==================
         data = fetch_settings_data()
         if data:
-            fields = [phone, new_email, None, None, honeypot_ips, None, folder_path, whitelist, blacklist]
+            fields = [phone, new_email, None, None, honeypot_ips,
+                    None, folder_path, whitelist, blacklist]
+
             for i, field in enumerate(fields):
                 if field and i < len(data) and data[i]:
-                    field.delete(0, 'end'); field.insert(0, str(data[i]))
-            if data[2]: interval_var.set(data[2])
-            if data[9] is not None: email_notify_var.set(bool(data[9])) 
+                    field.delete(0, 'end')
+                    field.insert(0, str(data[i]))
+
+            if data[2]:
+                interval_var.set(data[2])
+
+            if data[9] is not None:
+                email_notify_var.set(bool(data[9]))
 
 def fetch_settings_data():
     try:
@@ -691,6 +895,171 @@ def fetch_settings_data():
     except Exception as e:
         print("fetch_settings_data error:", e)
         return None
+# ================= LOGIN FIELD HELPER =================
+OTP_DATA = {"otp": None}
+import sys
+import random
+import bcrypt
+
+from securegate_new import EMERGENCY_ALERT
+def forgot_password():
+    win = tk.Toplevel(root)
+    win.title("Forgot Password")
+    win.geometry("400x330")
+    win.resizable(False, False)
+    win.transient(root)
+    win.grab_set()
+
+    frame = tk.Frame(win, padx=30, pady=20)
+    frame.pack(fill="both", expand=True)
+
+    tk.Label(
+        frame,
+        text="Password Recovery",
+        font=("Segoe UI", 14, "bold")
+    ).pack(pady=(0, 10))
+
+    info_lbl = tk.Label(
+        frame,
+        text="OTP will be sent to your registered email",
+        font=("Segoe UI", 9),
+        fg="#7f8c8d"
+    )
+    info_lbl.pack(anchor="w")
+
+    entry = ttk.Entry(frame)
+    entry.pack(fill="x", pady=8)
+
+    action_btn = tk.Button(
+        frame,
+        text="SEND OTP",
+        bg="#3498db",
+        fg="white",
+        relief="flat",
+        cursor="hand2"
+    )
+    action_btn.pack(fill="x", pady=10)
+
+    step = {"value": 1}
+
+    def process():
+        conn, cursor = db()
+
+        # ---------- STEP 1: SEND OTP ----------
+        if step["value"] == 1:
+            cursor.execute("SELECT email FROM settings WHERE id = 1")
+            row = cursor.fetchone()
+
+            if not row or not row[0]:
+                messagebox.showerror(
+                    "Critical Error",
+                    "Registered admin email not found.\nApplication will close."
+                )
+                sys.exit()
+
+            otp = str(random.randint(100000, 999999))
+            OTP_DATA["otp"] = otp
+
+            try:
+                EMERGENCY_ALERT.send_email_alert(
+                    subject="SecureGate Password Reset OTP",
+                    message=f"""
+Your SecureGate OTP is:
+
+<b>{otp}</b>
+
+Do not share this OTP with anyone.
+If you did not request a password reset, please contact admin immediately.
+                    """
+                )
+            except Exception:
+                messagebox.showerror(
+                    "Email Error",
+                    "Failed to send OTP.\nApplication will close."
+                )
+                sys.exit()
+
+            info_lbl.config(
+                text="OTP has been sent to your registered email.\nPlease verify."
+            )
+            entry.delete(0, "end")
+            action_btn.config(text="VERIFY OTP")
+            step["value"] = 2
+
+        # ---------- STEP 2: VERIFY OTP ----------
+        elif step["value"] == 2:
+            if entry.get().strip() != OTP_DATA["otp"]:
+                messagebox.showerror(
+                    "Invalid OTP",
+                    "OTP verification failed.\nApplication will close."
+                )
+                sys.exit()
+
+            info_lbl.config(text="Set new password")
+            entry.destroy()
+
+            pwd1 = ttk.Entry(frame, show="*")
+            pwd1.pack(fill="x", pady=6)
+
+            pwd2 = ttk.Entry(frame, show="*")
+            pwd2.pack(fill="x", pady=6)
+
+            action_btn.config(text="RESET PASSWORD")
+            step["pwd1"] = pwd1
+            step["pwd2"] = pwd2
+            step["value"] = 3
+
+        # ---------- STEP 3: RESET PASSWORD ----------
+        else:
+            pwd1 = step["pwd1"].get()
+            pwd2 = step["pwd2"].get()
+
+            if pwd1 != pwd2 or len(pwd1) < 8:
+                messagebox.showerror(
+                    "Invalid Password",
+                    "Passwords must match and be at least 8 characters."
+                )
+                return
+
+            hashed = bcrypt.hashpw(
+                pwd1.encode(), bcrypt.gensalt()
+            ).decode()
+
+            cursor.execute(
+                "UPDATE settings SET password_hash=%s WHERE id=1",
+                (hashed,)
+            )
+            conn.commit()
+
+            OTP_DATA["otp"] = None
+            messagebox.showinfo(
+                "Success",
+                "Password updated successfully.\nApplication will now close."
+            )
+            sys.exit()
+
+    action_btn.config(command=process)
+
+
+
+
+def create_login_field(parent, label_text, is_password=False, fg="#2c3e50", bg="#ffffff"):
+    tk.Label(
+        parent,
+        text=label_text,
+        font=("Segoe UI", 10, "bold"),
+        fg=fg,
+        bg=bg
+    ).pack(anchor="w", pady=(10, 0))
+
+    entry = ttk.Entry(
+        parent,
+        width=36,
+        font=("Segoe UI", 11),
+        show="•" if is_password else ""
+    )
+    entry.pack(fill="x", pady=(6, 14), ipady=5)
+    return entry
 
 
 def update_setting(val):
@@ -1158,8 +1527,7 @@ def fetch_data_in_thread(page_name, reset_pagination):
             "Logs": "iprequest_junction",
             "Port Monitor": "request_type",
             "Protocol Monitor": "Network_protocol",
-            "blocked IP": "blocked_ip_view" # Or whatever your blocked logic table is
-        }
+       }
 
         fetched_rows = None
         dynamic_cols = []

@@ -9,15 +9,64 @@ import queue
 import psutil
 from dotenv import load_dotenv
 import os
+import sys
 
-ENV_FILE = os.path.join(os.path.dirname(__file__), "securegate.env")
 
-# Load env safely (NO engine import)
+
+# ---------------- BASE DIR (EXE SAFE) ----------------
+def get_runtime_dir():
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+RUNTIME_DIR = get_runtime_dir()
+
+ENV_FILE = os.path.join(RUNTIME_DIR, "securegate.env")
+
+if not os.path.exists(ENV_FILE):
+    raise RuntimeError(f"securegate.env not found at: {ENV_FILE}")
+
 load_dotenv(ENV_FILE)
+
+# ---------------- SECUREGATE BASE DIR ----------------
+BASE_DIR = os.getenv("SECUREGATE_BASE_DIR")
+if not BASE_DIR:
+    raise RuntimeError("SECUREGATE_BASE_DIR is not set in securegate.env")
+
+BASE_DIR = os.path.abspath(BASE_DIR)
+os.makedirs(BASE_DIR, exist_ok=True)
 
 # -------------------------------------------------
 # GLOBAL CONFIG (SAFE)
 # -------------------------------------------------
+import traceback
+
+LOG_FILE = os.path.join(BASE_DIR, "securegate_error.log")
+
+def log_error(message, exc=None):
+    """
+    Appends error message to securegate_error.log.
+    File is created automatically if it does not exist.
+    """
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write("=" * 60 + "\n")
+            f.write(f"TIME : {time.ctime()}\n")
+            f.write(f"ERROR: {message}\n")
+
+            if exc:
+                f.write("TRACEBACK:\n")
+                f.write("".join(
+                    traceback.format_exception(type(exc), exc, exc.__traceback__)
+                ))
+
+            f.write("\n")
+
+    except Exception:
+        # Never crash the service due to logging failure
+        pass
+
+
 INTERFACE_NAME = os.getenv("SECUREGATE_INTERFACE", "eth0")
 
 SECUREGATE_PACKET_QUEUE_SIZE = int(
@@ -63,30 +112,23 @@ last_run = 0
 # -------------------------------------------------
 # ENSURE LOG FILES EXIST (GLOBAL VALUES)
 # -------------------------------------------------
-BASE_DIR = os.path.abspath("securegate_files")
 
+import os
+
+# 2️⃣ Define paths and ensure files exist
+# (Assuming these variables are defined in your CONFIG section)
 LOG_FILES = [
     SECUREGATE_LOG_FILE_STAGE1,
     SECUREGATE_LOG_FILE_STAGE2,
     SECUREGATE_LOG_FILE_IMPORTANT
 ]
 
-# 1️⃣ Check if directory exists
-if os.path.exists(BASE_DIR):
-    # Directory exists → just ensure log files
-    for log_file in LOG_FILES:
-        log_path = os.path.join(BASE_DIR, log_file)
-        if not os.path.exists(log_path):
-            open(log_path, "a").close()
-else:
-    # Directory does NOT exist → create it first
-    os.makedirs(BASE_DIR)
-
-    # Now create all log files inside it
-    for log_file in LOG_FILES:
-        log_path = os.path.join(BASE_DIR, log_file)
-        open(log_path, "a").close()
-
+for log_file in LOG_FILES:
+    log_path = os.path.join(BASE_DIR, log_file)
+    if not os.path.exists(log_path):
+        with open(log_path, "a") as f:
+            f.close()
+        print(f"📄 Created log file: {log_file}")
 
 
 def safe(data, key, default="N/A"):
@@ -98,17 +140,14 @@ def safe(data, key, default="N/A"):
 # -------------------------------------------------
 request_queue = queue.Queue(maxsize=SECUREGATE_PACKET_QUEUE_SIZE)
 
-
 def logfile(data):
     global last_run
     current_time = time.time()
 
-    # -------------------------------------------------
-    # LOG FILE PATHS (GLOBAL VALUES)
-    # -------------------------------------------------
-    source_file = SECUREGATE_LOG_FILE_STAGE1
-    destination_file = SECUREGATE_LOG_FILE_STAGE2
-    #print(request)
+    source_file = os.path.join(BASE_DIR, SECUREGATE_LOG_FILE_STAGE1)
+    destination_file = os.path.join(BASE_DIR, SECUREGATE_LOG_FILE_STAGE2)
+    important_file = os.path.join(BASE_DIR, SECUREGATE_LOG_FILE_IMPORTANT)
+
     request = {
         "Time": safe(data, "Time"),
         "Src_IP": safe(data, "Src_IP"),
@@ -119,44 +158,44 @@ def logfile(data):
 
     request_queue.put(request)
 
-    # Process queue → write logs
+    # ---------------- PROCESS QUEUE ----------------
     while not request_queue.empty():
         a = request_queue.get()
         try:
+            # Stage 1 log
             with open(source_file, "a") as f1:
                 portalocker.lock(f1, portalocker.LOCK_EX)
                 f1.write(json.dumps(a) + "\n")
                 portalocker.unlock(f1)
 
-            with open(SECUREGATE_LOG_FILE_IMPORTANT, "a") as f2:
+            # Important log (correct place)
+            with open(important_file, "a") as f2:
                 f2.write(json.dumps(a) + "\n")
 
-        except portalocker.exceptions.LockException:
-            print("File is locked, re-adding to queue")
+        except portalocker.exceptions.LockException as e:
+            log_error("File lock error", e)
             request_queue.put(a)
 
-    # -------------------------------------------------
-    # COPY INTERVAL (GLOBAL VALUE)
-    # -------------------------------------------------
+    # ---------------- COPY INTERVAL ----------------
     if current_time - last_run >= SECUREGATE_LOG_COPY_INTERVAL:
         last_run = current_time
 
         try:
             if os.path.exists(source_file):
                 with open(source_file, "r") as src:
-                    try:
-                        portalocker.lock(src, portalocker.LOCK_EX | portalocker.LOCK_NB)
-                        content = src.read()
+                    portalocker.lock(src, portalocker.LOCK_EX | portalocker.LOCK_NB)
+                    content = src.read()
+                    portalocker.unlock(src)
 
-                        with open(destination_file, "a") as dest:
-                            dest.write(content)
+                with open(destination_file, "a") as dest:
+                    dest.write(content)
 
-                        portalocker.unlock(src)
-                    except portalocker.exceptions.LockException:
-                        print("Source file is locked. Try again next time.")
                 os.remove(source_file)
+
         except Exception as e:
-            print(f"Error during file copy or delete: {e}")
+            log_error("Log rotation failed", e)
+
+
 
 
 PROTO_MAP = {
@@ -271,14 +310,12 @@ def log_packet(packet):
         request_queue.put(data)
 
     except Exception as e:
+        log_error("Engine crashed during startup", e)
         print(f"Error parsing packet: {e}")
 
     print(data)
     logfile(data)
 
 
-# -------------------------------------------------
-# PACKET CAPTURE LOOP (UNCHANGED)
-# -------------------------------------------------
 while True:
     sniff(iface=iface_name, prn=log_packet, store=False, count=0)
