@@ -148,6 +148,18 @@ def resolve_log_path(log_filename):
     open(path, "a").close()
     return path
 
+def build_db_config(allow_no_db=False):
+    config = {
+        "host": SECUREGATE_DB_HOST,
+        "user": SECUREGATE_DB_USER,
+        "password": SECUREGATE_DB_PASS,
+        "port": SECUREGATE_DB_PORT,
+    }
+
+    if not allow_no_db:
+        config["database"] = SECUREGATE_DB_NAME
+
+    return config
 
 
 # -------------------------------------------------
@@ -477,8 +489,8 @@ CREATE TABLE IF NOT EXISTS settings (
     email VARCHAR(50),
     phone VARCHAR(13),
 
-    request_time_limit INT,           -- in minutes
-    max_requests_per_ip JSON,
+    request_per_ip_per_hour INT,           -- in minutes
+    max_requests_per_minute JSON,
 
     honeypot_ips VARCHAR(255),
     allowed_ports LONGTEXT,
@@ -543,7 +555,7 @@ CREATE TABLE IF NOT EXISTS settings (
 
 
                 # First, checking if table has data so that jr future madhye user ne dilela data mule he change nay honar
-            cursor.execute("SELECT max_requests_per_ip FROM settings")
+            cursor.execute("SELECT max_requests_per_minute FROM settings")
             result = cursor.fetchone()
 
             if result == None:
@@ -558,7 +570,7 @@ CREATE TABLE IF NOT EXISTS settings (
                 (count,) = cursor.fetchone()
 
                 if count != 0:  # Only insert if table is empty
-                    query = "INSERT INTO settings (max_requests_per_ip) VALUES (%s)"
+                    query = "INSERT INTO settings (max_requests_per_minute) VALUES (%s)"
                     cursor.execute(query, (json_data,))
                     connection.commit()
 
@@ -880,7 +892,7 @@ CREATE TABLE IF NOT EXISTS settings (
         try:
             request.is_request_suspicious()
 
-            cursor.execute("SELECT max_requests_per_ip FROM settings")
+            cursor.execute("SELECT max_requests_per_minute FROM settings")
             result = cursor.fetchone()
 
             if result is not None and result[0]:
@@ -892,7 +904,7 @@ CREATE TABLE IF NOT EXISTS settings (
                         reqpertime_dict = parsed
                 except Exception as e:
                     # JSON invalid → keep empty dict, do NOT crash
-                    log_error("Invalid JSON in max_requests_per_ip", e)
+                    log_error("Invalid JSON in max_requests_per_minute", e)
 
             # ✅ SAFE: if empty or invalid, just skip this section
             if isinstance(reqpertime_dict, dict) and reqpertime_dict:
