@@ -141,6 +141,7 @@ def safe(data, key, default="N/A"):
 request_queue = queue.Queue(maxsize=SECUREGATE_PACKET_QUEUE_SIZE)
 
 def logfile(data):
+        
     global last_run
     current_time = time.time()
 
@@ -315,7 +316,11 @@ def log_packet(packet):
 
     print(data)
     logfile(data)
-
-
+    
 while True:
-    sniff(iface=iface_name, prn=log_packet, store=False, count=0)
+    
+    SECUREGATE_NETWORK_MONITOR = os.getenv("SECUREGATE_NETWORK_MONITOR", "False")
+    if not SECUREGATE_NETWORK_MONITOR:
+        time.sleep(2)
+    else:
+        sniff(iface=iface_name, prn=log_packet, store=False, count=0)

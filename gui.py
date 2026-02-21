@@ -12,6 +12,7 @@ from PIL import Image, ImageTk
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
 from reportlab.lib import colors
+import ipaddress
 from reportlab.lib.styles import getSampleStyleSheet
 from datetime import datetime
 from tkinter import filedialog
@@ -87,6 +88,7 @@ SECUREGATE_GUI_LOAD_RECORD = os.getenv(
 
 RUN_ENGINE=False
 validate_user=False
+SECUREGATE_NETWORK_MONITOR = None
 current_page = 0
 rows_per_page =  SECUREGATE_GUI_ROWS_PER_PAGE
 all_rows = []
@@ -303,36 +305,115 @@ def export_alerts_from_db():
         "Export Successful",
         f"Security alert report exported successfully:\n{file_path}"
     )
+import bcrypt
+from tkinter import messagebox
 
-
-def validate(username,password):
+def validate(username, password):
     global validate_user
-    database=db()
-    connection=database[0]
-    cursor=database[1]
-    password=hash_password(password)
-    cursor.execute("SELECT %s FROM settings WHERE admin_name = %s", (password,username))
-    result = cursor.fetchone()
-    print(result)
-    #please change it later:
-    result=True
 
-    #
-    if result:
-        validate_user=True
-        dashboardshow()
-    else:
-        root.quit()
-        print("fail")
-        messagebox.showerror(message="LOGIN FAILED")
+    conn, cursor = db()
+    if not conn or not cursor:
+        messagebox.showerror("DB Error", "Database connection failed")
+        return
+
+    try:
+        cursor.execute(
+            "SELECT password_hash FROM settings WHERE admin_name = %s LIMIT 1",
+            (username,)
+        )
+        row = cursor.fetchone()
+
+    finally:
+        cursor.close()
+        conn.close()
+
+    # ❌ Username not found
+    if not row:
+        messagebox.showerror("Login Failed", "Invalid username")
+        return
+
+    stored_hash = row[0]
+
+    # DB may return string → convert to bytes
+    if isinstance(stored_hash, str):
+        stored_hash = stored_hash.encode("utf-8")
+
+    # ✅ bcrypt verification (THIS IS THE KEY FIX)
+    if not bcrypt.checkpw(password.encode("utf-8"), stored_hash):
+        messagebox.showerror("Login Failed", "Invalid password")
+        return
+
+    # ✅ SUCCESS
+    validate_user = True
+    dashboardshow()
 
 
 
 
 
+def decrypt_sensitive_file():
+    try:
+        conn, cursor = db()
 
+        if not conn or not cursor:
+            print("[DECRYPT ERROR] DB connection failed.")
+            return False
+        
+        
+        cursor.execute(
+            "SELECT sensitive_folders FROM settings LIMIT 1"
+        )
+        result = cursor.fetchone()
 
+        if not result or not result[0]:
+            print("[DECRYPT] No sensitive file path configured.")
+            return False
 
+        sensitive_file = result[0].strip()
+
+        encrypted_path = sensitive_file + ".enc"
+
+        # -------- Check if encrypted file exists --------
+        if not os.path.exists(encrypted_path):
+            print("[DECRYPT] No encrypted file found to decrypt.")
+            return False
+
+        # -------- Check if already decrypted --------
+        if os.path.exists(sensitive_file):
+            print("[DECRYPT] File already exists in decrypted form.")
+            return False
+
+        # -------- Load key --------
+        key_file = "securegate.key"
+
+        if not os.path.exists(key_file):
+            print("[DECRYPT ERROR] Encryption key not found.")
+            return False
+
+        from cryptography.fernet import Fernet
+
+        with open(key_file, "rb") as kf:
+            key = kf.read()
+
+        fernet = Fernet(key)
+
+        # -------- Decrypt --------
+        with open(encrypted_path, "rb") as ef:
+            encrypted_data = ef.read()
+
+        decrypted_data = fernet.decrypt(encrypted_data)
+
+        with open(sensitive_file, "wb") as df:
+            df.write(decrypted_data)
+
+        print(f"[DECRYPT SUCCESS] File restored: {sensitive_file}")
+
+        return True
+
+    except Exception as e:
+        log_error("Decryption failed", e)
+        print("[DECRYPT ERROR]", e)
+        return False
 
 def custom_askyesno(title, message):
     result = [False]
@@ -475,28 +556,32 @@ global interval_var, request_limit_var
 
 def fetch_settings_data():
     try:
-        dt = db()
-        result=["","","","","","","","",""]
-        connection, cursor = dt
+        conn, cursor = db()
         cursor.execute("""
-            SELECT 
-              
-                request_per_ip_per_hour, 
-                max_requests_per_minute, 
-                honeypot_ips, 
-                sensitive_folders, 
-            FROM settings 
+            SELECT
+                email,
+                email_token,
+                suspicious_activity_alert_mail,
+                email_alerts_enabled,
+                max_requests_per_minute,
+                honeypot_ips,
+                sensitive_folders,
+                remote_upload_directory,
+                whitelisted_ips,
+                blacklisted_ips
+            FROM settings
             LIMIT 1
-                    """)
-        result = cursor.fetchone()
-        if result:
-            return result
-        else:
-            result=["","","","","","","","",""]
-                
-    except:
-        result=["","","","","","","","",""]
-        return result
+        """)
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        return row
+    except Exception as e:
+        print("fetch_settings_data error:", e)
+        return None
+
+
+
 def jsonins(tp,data,data2):
     t=db()
     conn=t[0]
@@ -682,15 +767,25 @@ def attach_info(widget, text):
 
 IPV4_REGEX = re.compile(r"^((25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(25[0-5]|2[0-4]\d|[01]?\d\d?)$")
 IPV6_REGEX = re.compile(r"^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$")
+
 def is_valid_ip(ip):
-    return IPV4_REGEX.match(ip) or IPV6_REGEX.match(ip)
+    try:
+        ipaddress.ip_address(ip)
+        return True
+    except ValueError:
+        return False
+
 def handle_network_setting(mode, field, widget=None):
     """
     mode   : 'show' | 'update'
-    field  : whitelisted_ips | blacklisted_ips
+    field  : whitelisted_ips | blacklisted_ips | honeypot_ips
+             sensitive_folders | remote_upload_directory
     """
 
     conn, cursor = db()
+    if not conn or not cursor:
+        messagebox.showerror("Database Error", "Unable to connect to database.")
+        return
 
     # ================= SHOW MODE =================
     if mode == "show":
@@ -703,39 +798,193 @@ def handle_network_setting(mode, field, widget=None):
     # ================= UPDATE MODE =================
     raw_value = widget.get().strip()
 
-    # ---------- SPLIT & CLEAN ----------
-    input_ips = [ip.strip() for ip in raw_value.split(",") if ip.strip()]
+    # ============================================================
+    # PATH-BASED SETTINGS VALIDATION (ENTERPRISE LEVEL)
+    # ============================================================
+    if field in ("sensitive_folders", "remote_upload_directory"):
 
-    if not input_ips:
-        messagebox.showerror("Invalid Input", "IP list cannot be empty.")
-        return
+        if not raw_value:
+            messagebox.showerror("Invalid Input", "Path cannot be empty.")
+            return
 
-    # ---------- VALIDATE ----------
-    invalid_ips = [ip for ip in input_ips if not is_valid_ip(ip)]
-    if invalid_ips:
-        messagebox.showerror(
-            "Invalid IP(s)",
-            "The following IPs are invalid:\n\n" + "\n".join(invalid_ips)
+        # Must exist
+        if not os.path.exists(raw_value):
+            messagebox.showerror("Invalid Path", "Directory does not exist.")
+            return
+
+        # Must be directory
+        if not os.path.isdir(raw_value):
+            messagebox.showerror("Invalid Path", "Path must be a directory.")
+            return
+
+        # Must have read & write permission
+        if not os.access(raw_value, os.R_OK | os.W_OK):
+            messagebox.showerror(
+                "Permission Error",
+                "Application does not have read/write permission for this directory."
+            )
+            return
+
+        # Prevent protecting system critical directories
+        critical_paths = [
+            "/", "/etc", "/bin", "/usr",
+            "C:\\Windows", "C:\\Program Files"
+        ]
+
+        normalized_path = os.path.abspath(raw_value)
+
+        for critical in critical_paths:
+            if normalized_path.lower() == os.path.abspath(critical).lower():
+                messagebox.showerror(
+                    "Unsafe Directory",
+                    "Cannot use system-critical directory."
+                )
+                return
+
+        # Save if changed
+        cursor.execute(f"SELECT {field} FROM settings LIMIT 1")
+        current = cursor.fetchone()
+        current_val = current[0] if current else None
+
+        if raw_value == current_val:
+            messagebox.showinfo("No Change", "This value is already set.")
+            cursor.close()
+            conn.close()
+            return
+
+        cursor.execute(
+            f"UPDATE settings SET {field} = %s",
+            (raw_value,)
+        )
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        messagebox.showinfo(
+            "Success",
+            f"{field.replace('_', ' ').title()} updated successfully."
         )
         return
 
-    # Remove duplicates while preserving order
-    new_ips = list(dict.fromkeys(input_ips))
+    # ============================================================
+    # IP-BASED SETTINGS VALIDATION (WHITELIST / BLACKLIST / HONEYPOT)
+    # ============================================================
 
-    # ---------- FETCH EXISTING ----------
+    input_values = [ip.strip() for ip in raw_value.split(",") if ip.strip()]
+
+    if not input_values:
+        messagebox.showerror("Invalid Input", "IP list cannot be empty.")
+        return
+
+    validated_entries = []
+    invalid_entries = []
+
+    for value in input_values:
+        try:
+            # Allow IP or CIDR
+            network = ipaddress.ip_network(value, strict=False)
+            validated_entries.append(str(network))
+        except ValueError:
+            invalid_entries.append(value)
+
+    if invalid_entries:
+        messagebox.showerror(
+            "Invalid IP(s)",
+            "The following entries are invalid:\n\n" + "\n".join(invalid_entries)
+        )
+        return
+
+    # Remove duplicates
+    new_entries = list(dict.fromkeys(validated_entries))
+
+    # ============================================================
+    # HONEYPOT EXTRA SECURITY CHECKS
+    # ============================================================
+    if field == "honeypot_ips":
+        for entry in new_entries:
+            ip_obj = ipaddress.ip_network(entry, strict=False)
+
+            if ip_obj.is_loopback:
+                messagebox.showerror(
+                    "Invalid Honeypot IP",
+                    "Loopback addresses (127.0.0.1) are not allowed."
+                )
+                return
+
+            if ip_obj.is_multicast:
+                messagebox.showerror(
+                    "Invalid Honeypot IP",
+                    "Multicast addresses are not allowed."
+                )
+                return
+
+            if ip_obj.prefixlen == 0:
+                messagebox.showerror(
+                    "Invalid Honeypot IP",
+                    "Cannot use entire internet (0.0.0.0/0)."
+                )
+                return
+
+    # ============================================================
+    # WHITELIST / BLACKLIST CONFLICT DETECTION
+    # ============================================================
+    cursor.execute("SELECT whitelisted_ips, blacklisted_ips FROM settings LIMIT 1")
+    row = cursor.fetchone()
+
+    existing_whitelist = []
+    existing_blacklist = []
+
+    if row:
+        if row[0]:
+            existing_whitelist = [ip.strip() for ip in row[0].split(",") if ip.strip()]
+        if row[1]:
+            existing_blacklist = [ip.strip() for ip in row[1].split(",") if ip.strip()]
+
+    if field == "whitelisted_ips":
+        conflict = set(new_entries) & set(existing_blacklist)
+    elif field == "blacklisted_ips":
+        conflict = set(new_entries) & set(existing_whitelist)
+    else:
+        conflict = set()
+
+    if conflict:
+        messagebox.showerror(
+            "Configuration Conflict",
+            "These IPs already exist in opposite list:\n\n" +
+            "\n".join(conflict)
+        )
+        return
+
+    # ============================================================
+    # PREVENT SELF LOCKOUT
+    # ============================================================
+    try:
+        local_ip = socket.gethostbyname(socket.gethostname())
+        if field == "blacklisted_ips":
+            if local_ip in new_entries:
+                messagebox.showerror(
+                    "Critical Error",
+                    "You are attempting to blacklist your own machine."
+                )
+                return
+    except:
+        pass
+
+    # ============================================================
+    # SAVE TO DATABASE
+    # ============================================================
     cursor.execute(f"SELECT {field} FROM settings LIMIT 1")
     row = cursor.fetchone()
 
-    existing_ips = []
+    existing_entries = []
     if row and row[0]:
-        existing_ips = [ip.strip() for ip in row[0].split(",") if ip.strip()]
+        existing_entries = [ip.strip() for ip in row[0].split(",") if ip.strip()]
 
-    # ---------- DIFF CALCULATION ----------
-    added_ips = [ip for ip in new_ips if ip not in existing_ips]
-    removed_ips = [ip for ip in existing_ips if ip not in new_ips]
+    added = [ip for ip in new_entries if ip not in existing_entries]
+    removed = [ip for ip in existing_entries if ip not in new_entries]
 
-    # ---------- SAVE (FULL REPLACE) ----------
-    final_value = ",".join(new_ips)
+    final_value = ",".join(new_entries)
+
     cursor.execute(
         f"UPDATE settings SET {field} = %s",
         (final_value,)
@@ -744,19 +993,81 @@ def handle_network_setting(mode, field, widget=None):
     cursor.close()
     conn.close()
 
-    # ---------- USER FEEDBACK ----------
-    msg = "IP list updated successfully.\n"
+    # ============================================================
+    # USER FEEDBACK
+    # ============================================================
+    msg = "Settings updated successfully.\n"
 
-    if added_ips:
-        msg += "\nAdded:\n" + "\n".join(added_ips)
+    if added:
+        msg += "\nAdded:\n" + "\n".join(added)
 
-    if removed_ips:
-        msg += "\n\nRemoved:\n" + "\n".join(removed_ips)
+    if removed:
+        msg += "\n\nRemoved:\n" + "\n".join(removed)
 
-    if not added_ips and not removed_ips:
+    if not added and not removed:
         msg += "\n\n(No changes detected)"
 
     messagebox.showinfo("Success", msg)
+
+def reload_settings_ui():
+    try:
+        data = fetch_settings_data()
+        if not data:
+            return
+
+        (
+            email_val,
+            email_token_val,
+            suspicious_email_val,
+            email_alerts_enabled,
+            max_requests_json,
+            honeypot_ips_val,
+            sensitive_folders_val,
+            remote_upload_val,
+            whitelist_val,
+            blacklist_val
+        ) = data
+
+        if new_email:
+            new_email.delete(0, "end")
+            new_email.insert(0, email_val or "")
+
+        if email_api_token:
+            email_api_token.delete(0, "end")
+            email_api_token.insert(0, email_token_val or "")
+
+        if suspicious_activity_alert_mail:
+            suspicious_activity_alert_mail.delete(0, "end")
+            suspicious_activity_alert_mail.insert(0, suspicious_email_val or "")
+
+        if honeypot_ips:
+            honeypot_ips.delete(0, "end")
+            honeypot_ips.insert(0, honeypot_ips_val or "")
+
+        if folder_path:
+            folder_path.delete(0, "end")
+            folder_path.insert(0, sensitive_folders_val or "")
+
+        if remote_upload_path:
+            remote_upload_path.delete(0, "end")
+            remote_upload_path.insert(0, remote_upload_val or "")
+
+        if whitelist:
+            whitelist.delete(0, "end")
+            whitelist.insert(0, whitelist_val or "")
+
+        if blacklist:
+            blacklist.delete(0, "end")
+            blacklist.insert(0, blacklist_val or "")
+
+        if email_notify_var is not None:
+            try:
+                email_notify_var.set(bool(int(email_alerts_enabled)))
+            except Exception:
+                email_notify_var.set(False)
+
+    except Exception as e:
+        print("Settings reload error:", e)
 
 
 
@@ -764,7 +1075,8 @@ def settingshow(setnum):
     global admin_user, email, admin_pass, max_requests_per_minute, time_limit, honeypot_ips
     global sensative_folder, folder_path, allowed_ports, port_services, form_container
     global image_container, new_email, whitelist, blacklist, interval_var, request_limit_var 
-    global port, service, email_notify_var
+    global port, service, email_notify_var,remote_upload_path,email_api_token, suspicious_activity_alert_mail
+
 
     # --- THE CRITICAL FIX: STOP BACKGROUND AUTO-REFRESH ---
     # This prevents the Dashboard timer from clearing your Settings UI
@@ -842,8 +1154,11 @@ def settingshow(setnum):
         BG_COLOR, CARD_BG, ACCENT_DARK, PRIMARY_BLUE = (
             "#f4f7f6", "#ffffff", "#2c3e50", "#3498db"
         )
+        sidebar.grid_remove()
+        sidebar.grid_propagate(False)
 
-        sidebar.pack_forget()
+        sidebar.configure(width=180)
+        sidebar.lift()
 
         database = db()
         connection, cursor = database[0], database[1]
@@ -978,6 +1293,7 @@ def settingshow(setnum):
                             font=("Segoe UI", 9, "bold"), padx=16, pady=4,
                             cursor="hand2", activebackground=HOVER_GRAY
                         ).grid(row=0, column=2, padx=(10, 22))
+                    ent._row_frame = row_frame
                     return ent
 
                 elif widget_type == "check":
@@ -1022,11 +1338,61 @@ def settingshow(setnum):
             general_card = ttk.LabelFrame(settings_container, text=" General Settings ")
             general_card.pack(fill="x", pady=18)
 
-            
-            new_email = add_setting_row(general_card, 1, "System Alert Email", 
-                                        cmd=lambda: update_setting("new email"))
+            # ---------- Alert Email ----------
+            new_email = add_setting_row(
+                general_card,
+                0,
+                "System Alert Email",
+                cmd=lambda: update_setting("new email")
+            )
 
-            
+             # ---------- Email API Token ----------
+            email_api_token = add_setting_row(
+            general_card,
+            1,
+            "Email API Token (Resend)",
+            cmd=lambda: update_setting("email_api_token")
+        )
+
+            email_token_row = email_api_token._row_frame
+
+
+            # ---------- TEST EMAIL BUTTON ----------
+            tk.Button(
+                email_token_row,
+                text="TEST EMAIL",
+                bg="#10b981",          # green
+                fg="white",
+                relief="flat",
+                font=("Segoe UI", 9, "bold"),
+                padx=12,
+                pady=4,
+                cursor="hand2",
+                activebackground="#059669",
+                command=lambda: update_setting("test_email_token")
+            ).grid(row=0, column=3, padx=(6, 18))
+
+            # ---------- Enable / Disable All Email Notifications ----------
+            if 'email_notify_var' not in globals():
+                email_notify_var = tk.BooleanVar()
+
+            enable_email_cb = add_setting_row(
+                general_card,
+                2,
+                "Enable Email Notifications",
+                widget_type="check",
+                var=email_notify_var,
+                cmd=lambda: update_setting("email_notifications")
+            )
+
+            # ---------- Suspicious Activity Alert Email (TEXTBOX) ----------
+            suspicious_activity_alert_mail = add_setting_row(
+                general_card,
+                3,
+                "Suspicious Activity Alert Email",
+                cmd=lambda: update_setting("suspicious_activity_alert_mail")
+            )
+
             # ================== TRAFFIC CONTROLS ==================
             limit_card = ttk.LabelFrame(settings_container, text=" Traffic Controls ")
             limit_card.pack(fill="x", pady=18)
@@ -1063,7 +1429,7 @@ def settingshow(setnum):
                 textvariable=interval_var,
                 values=[1, 2, 5, 10, 20, 30],
                 width=6,
-                state="readonly"
+                state="normal"
             ).pack(side="left", padx=(0, 10))
 
             ttk.Combobox(
@@ -1071,7 +1437,7 @@ def settingshow(setnum):
                 textvariable=request_limit_var,
                 values=[50, 100, 200, 500, 1000, 5000],
                 width=8,
-                state="readonly"
+                state="normal"
             ).pack(side="left")
 
             tk.Button(
@@ -1127,31 +1493,55 @@ def settingshow(setnum):
             security_card = ttk.LabelFrame(settings_container, text=" Network Intelligence ")
             security_card.pack(fill="x", pady=18)
 
-            honeypot_ips = add_setting_row(security_card, 0, "Honeypot IP", 
-                                        cmd=lambda: update_setting("honeypot_ips"))
+            honeypot_ips = add_setting_row(
+                security_card,
+                0,
+                "Honeypot IP",
+                cmd=lambda: update_setting("honeypot_ips")
+            )
 
-            folder_path = add_setting_row(security_card, 1, "Protected Directory", 
-                                        cmd=lambda: update_setting("sensitive folder"))
+            folder_path = add_setting_row(
+                security_card,
+                1,
+                "Protected Directory",
+                cmd=lambda: update_setting("sensitive folder")
+            )
 
-            whitelist = add_setting_row(security_card, 2, "Permitted IP List", 
-                                        cmd=lambda: handle_network_setting("update", "whitelisted_ips", whitelist))
+            # ---------- Remote Upload Directory (DESTINATION) ----------
+            remote_upload_path = add_setting_row(
+                security_card,
+                2,
+                "Remote Upload Directory (On Attack)",
+                cmd=lambda: update_setting("remote_upload_directory")
+            )
+            
+            
+            whitelist = add_setting_row(
+                security_card,
+                3,
+                "Permitted IP List",
+                cmd=lambda: handle_network_setting("update", "whitelisted_ips", whitelist)
+            )
 
-            blacklist = add_setting_row(security_card, 3, "Restricted IP List", 
-                                        cmd=lambda:handle_network_setting("update", "blacklisted_ips", blacklist))
+            blacklist = add_setting_row(
+                security_card,
+                4,
+                "Restricted IP List",
+                cmd=lambda: handle_network_setting("update", "blacklisted_ips", blacklist)
+            )
+            blacklist = add_setting_row(
+    security_card,
+    4,
+    "Restricted IP List",
+    cmd=lambda: handle_network_setting("update", "blacklisted_ips", blacklist)
+)
 
             # ================== LOAD & VERIFY DATA ==================
 
-            honeypot_ips.delete(0, "end")
-            honeypot_ips.insert(0, handle_network_setting("show", "honeypot_ips"))
+            reload_settings_ui()
 
-            folder_path.delete(0, "end")
-            folder_path.insert(0, handle_network_setting("show", "sensitive_folders"))
 
-            whitelist.delete(0, "end")
-            whitelist.insert(0, handle_network_setting("show", "whitelisted_ips"))
 
-            blacklist.delete(0, "end")
-            blacklist.insert(0, handle_network_setting("show", "blacklisted_ips"))
             data = fetch_settings_data()
             if data:
                 # 1. Clear existing data and verify/insert fresh data from DB
@@ -1172,37 +1562,7 @@ def settingshow(setnum):
                 #if data[2]: interval_var.set(str(data[2]))
                 #if data[3]: request_limit_var.set(str(data[3]))
 
-                # 3. Update Checkbox
-                if len(data) > 9 and data[9] is not None:
-                    email_notify_var.set(bool(data[9]))
-
-
-def fetch_settings_data():
-    try:
-        conn, cursor = db()
-        cursor.execute("""
-            SELECT
                 
-                    
-                email,
-                request_per_ip_per_hour,
-                max_requests_per_minute,
-                honeypot_ips,
-                allowed_ports,
-                sensitive_folders,
-                whitelisted_ips,
-                blacklisted_ips,
-                email_alerts_enabled
-            FROM settings
-            LIMIT 1
-        """)
-        data = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        return data
-    except Exception as e:
-        print("fetch_settings_data error:", e)
-        return None
 # ================= LOGIN FIELD HELPER =================
 OTP_DATA = {"otp": None}
 
@@ -1430,6 +1790,8 @@ def update_setting(val):
     global honeypot_ips, folder_path, allowed_ports, port_services
     global whitelist, blacklist, interval_var, request_limit_var
     global port, service, email_notify_var, new_email, max_requests_per_minute
+    global email_api_token, suspicious_activity_alert_mail,remote_upload_path
+
 
     # ---------- REGEX PATTERNS ----------
     USERNAME_REGEX = re.compile(r"^[a-zA-Z0-9_.-]{3,30}$")
@@ -1450,7 +1812,70 @@ def update_setting(val):
 
     
     # ================= EMAIL =================
-    if val == "new email":
+        # ================= ADMIN SIGN-IN / ACCOUNT CREATION =================
+    if val == "sign in":
+        username = admin_user.get().strip()
+        email_val = email.get().strip()
+        password = admin_pass.get().strip()
+
+        # ---------- VALIDATION ----------
+        if not USERNAME_REGEX.match(username):
+            messagebox.showerror(
+                "Invalid Username",
+                "Username must be 3–30 characters.\nAllowed: letters, numbers, . _ -"
+            )
+            return
+
+        if not EMAIL_REGEX.match(email_val):
+            messagebox.showerror("Invalid Email", "Enter a valid email address.")
+            return
+
+        if not PASSWORD_REGEX.match(password):
+            messagebox.showerror(
+                "Weak Password",
+                "Password must contain:\n"
+                "• At least 8 characters\n"
+                "• One uppercase letter\n"
+                "• One lowercase letter\n"
+                "• One number\n"
+                "• One special character"
+            )
+            return
+
+        # ---------- CHECK IF ADMIN ALREADY EXISTS ----------
+        cursor.execute("SELECT admin_name FROM settings LIMIT 1")
+        if cursor.fetchone():
+            messagebox.showwarning(
+                "Admin Exists",
+                "An admin account already exists.\nPlease log in instead."
+            )
+            return
+
+        # ---------- HASH PASSWORD (bcrypt) ----------
+        hashed_password = bcrypt.hashpw(
+            password.encode("utf-8"),
+            bcrypt.gensalt()
+        ).decode("utf-8")
+
+        # ---------- INSERT INTO DATABASE ----------
+        cursor.execute("""
+            INSERT INTO settings (admin_name, email, password_hash)
+            VALUES (%s, %s, %s)
+        """, (username, email_val, hashed_password))
+
+        connection.commit()
+
+        messagebox.showinfo(
+            "Success",
+            "Admin account created successfully.\nPlease log in."
+        )
+
+        # Redirect to login screen
+        settingshow(2)
+        reload_settings_ui()
+
+
+    elif val == "new email":
         new_val = new_email.get().strip()
         if not EMAIL_REGEX.match(new_val):
             messagebox.showerror("Invalid Email", "Enter a valid email address.")
@@ -1463,6 +1888,27 @@ def update_setting(val):
         cursor.execute("UPDATE settings SET email = %s", (new_val,))
         connection.commit()
         messagebox.showinfo("Success", "Alert email updated.")
+    
+
+    elif val == "email_api_token":
+        token = email_api_token.get().strip()
+
+        if not token:
+            messagebox.showerror("Invalid Token", "API token cannot be empty.")
+            return
+
+        if token == get_current_setting("email_token"):
+            messagebox.showinfo("No Change", "This API token is already saved.")
+            return
+
+        cursor.execute(
+            "UPDATE settings SET email_token = %s",
+            (token,)
+        )
+        connection.commit()
+        reload_settings_ui()
+        messagebox.showinfo("Success", "Email API token updated.")
+
 
     # ================= RATE LIMIT =================
     elif val == "max_requests_per_minute":
@@ -1476,6 +1922,148 @@ def update_setting(val):
         # Assuming jsonins handles its own internal duplicate check/logic
         jsonins("rqpt", interval, limit)
         messagebox.showinfo("Success", f"Traffic policy updated: {limit} reqs / {interval} min.")
+
+
+
+    elif val == "suspicious_activity_alert_mail":
+        email_value = suspicious_activity_alert_mail.get().strip()
+
+        # Empty = disable suspicious alerts
+        if email_value == "":
+            cursor.execute(
+
+                "UPDATE settings SET suspicious_activity_alert_mail = NULL"
+            )
+            connection.commit()
+            reload_settings_ui()
+            messagebox.showinfo(
+                "Updated",
+                "Suspicious activity email alerts disabled."
+            )
+            return
+
+        # Validate email format
+        if not EMAIL_REGEX.match(email_value):
+            messagebox.showerror(
+                "Invalid Email",
+                "Enter a valid email address for suspicious activity alerts."
+            )
+            return
+
+        if email_value == get_current_setting("suspicious_activity_alert_mail"):
+            messagebox.showinfo("No Change", "This email is already set.")
+            return
+
+        cursor.execute(
+            "UPDATE settings SET suspicious_activity_alert_mail = %s",
+            (email_value,)
+        )
+        connection.commit()
+        reload_settings_ui()
+        messagebox.showinfo(
+            "Success",
+            "Suspicious activity alert email updated."
+        )
+
+    
+    elif val == "remote_upload_directory":
+            upload_path = remote_upload_path.get().strip()
+
+            if not PATH_REGEX.match(upload_path):
+                messagebox.showerror(
+                    "Invalid Path",
+                    "Invalid remote upload directory format."
+                )
+                return
+
+            if upload_path == get_current_setting("remote_upload_directory"):
+                messagebox.showinfo(
+                    "No Change",
+                    "This remote upload directory is already set."
+                )
+                return
+
+            cursor.execute(
+                "UPDATE settings SET remote_upload_directory = %s",
+                (upload_path,)
+            )
+            connection.commit()
+            reload_settings_ui()
+            messagebox.showinfo(
+                "Success",
+                "Remote upload directory updated successfully."
+            )
+
+
+    elif val == "test_email_token":
+        try:
+            # ---------- FETCH EMAIL SETTINGS FROM DB ----------
+            conn, cursor = db()
+
+            cursor.execute("""
+                SELECT email_token, suspicious_activity_alert_mail
+                FROM settings
+                LIMIT 1
+            """)
+            row = cursor.fetchone()
+
+            cursor.close()
+            conn.close()
+
+            if not row:
+                raise Exception("Email configuration not found in database.")
+
+            api_token, receiver_email = row
+
+            if not api_token:
+                raise Exception("Resend API token is not configured.")
+
+            if not receiver_email:
+                raise Exception("Recipient email address is missing.")
+
+            # ---------- CONFIGURE RESEND ----------
+            resend.api_key = api_token
+
+            # ---------- BUILD TEST EMAIL ----------
+            subject = "🚨 SecureGate Test Alert – Email System Verification"
+
+            html_message = f"""
+            <div style="font-family:Segoe UI,Arial,sans-serif">
+                <h2 style="color:#dc2626">SecureGate – Test Security Alert</h2>
+                <p>This is a <b>test email</b> to verify your email alert configuration.</p>
+
+                <table cellpadding="6" cellspacing="0" border="0">
+                    <tr><td><b>Alert Type:</b></td><td>Intrusion (TEST)</td></tr>
+                    <tr><td><b>Source IP:</b></td><td>127.0.0.1</td></tr>
+                    <tr><td><b>Protocol:</b></td><td>TEST_EMAIL</td></tr>
+                    <tr><td><b>Timestamp:</b></td><td>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</td></tr>
+                </table>
+
+                <p style="margin-top:12px;color:#555">
+                    If you received this email, your SecureGate email system is working correctly.
+                </p>
+            </div>
+            """
+
+            # ---------- SEND EMAIL ----------
+            resend.Emails.send({
+                "from": "SecureGate <onboarding@resend.dev>",
+                "to": receiver_email,
+                "subject": subject,
+                "html": html_message
+            })
+
+            messagebox.showinfo(
+                "Test Email Sent",
+                "Test email sent successfully.\nPlease check your inbox."
+            )
+
+        except Exception as e:
+            messagebox.showerror(
+                "Test Email Failed",
+                f"Unable to send test email.\n\n{e}"
+            )
+
 
     # ================= HONEYPOT =================
     elif val == "honeypot_ips":
@@ -1517,8 +2105,164 @@ def update_setting(val):
         status = "enabled" if new_state else "disabled"
         messagebox.showinfo("Success", f"Real-time notifications {status}.")
 
-    # ================= WHITELIST / BLACKLIST =================
-    
+    elif val == "decrypt_file":
+        success = decrypt_sensitive_file()
+
+    if success:
+        messagebox.showinfo(
+            "Decryption Successful",
+            "Encrypted file has been successfully decrypted."
+        )
+    else:
+        messagebox.showwarning(
+            "Decryption Failed",
+            "No encrypted file found or file already decrypted."
+        )
+def toggle_network_monitor():
+    global SECUREGATE_NETWORK_MONITOR, network_monitor_btn
+
+    load_dotenv(ENV_FILE, override=True)
+
+    current_value = os.getenv("SECUREGATE_NETWORK_MONITOR", "False").lower()
+    new_value = "True" if current_value == "false" else "False"
+
+    # If turning ON → perform validation first
+    if new_value == "True":
+
+        conn, cursor = db()
+        if not conn:
+            messagebox.showerror("Database Error", "Unable to verify configuration.")
+            return
+
+        cursor.execute("""
+            SELECT honeypot_ips,
+                whitelisted_ips,
+                blacklisted_ips,
+                sensitive_folders
+            FROM settings
+            LIMIT 1
+        """)
+
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if not row:
+            messagebox.showerror("Configuration Error", "System settings not found.")
+            return
+
+        honeypot, whitelist, blacklist, folder = row
+
+        warnings = []
+        critical = []
+
+        # -------- BASIC CHECKS --------
+        if not honeypot:
+            warnings.append("• Honeypot IP is not configured.")
+
+        if not whitelist:
+            warnings.append("• Whitelist IP list is empty.")
+
+        if not blacklist:
+            warnings.append("• Blacklist IP list is empty.")
+
+        if not folder:
+            warnings.append("• Protected directory is not set.")
+
+        # -------- ADVANCED NETWORK SAFETY CHECKS --------
+        private_ranges = [
+            ipaddress.ip_network("10.0.0.0/8"),
+            ipaddress.ip_network("172.16.0.0/12"),
+            ipaddress.ip_network("192.168.0.0/16"),
+            ipaddress.ip_network("127.0.0.0/8")
+        ]
+
+        # Check if blacklist blocks internal ranges
+        if blacklist:
+            for ip in blacklist.split(","):
+                ip = ip.strip()
+                try:
+                    ip_obj = ipaddress.ip_address(ip)
+                    for net in private_ranges:
+                        if ip_obj in net:
+                            critical.append(
+                                f"• Internal IP {ip} is blacklisted.\n  This may block internal network communication."
+                            )
+                except:
+                    pass
+
+        # Check if honeypot equals localhost
+        if honeypot and honeypot.strip() == "127.0.0.1":
+            critical.append(
+                "• Honeypot IP is set to localhost (127.0.0.1).\n  This may create redirection loops."
+            )
+
+        # -------- BUILD MESSAGE --------
+        if warnings or critical:
+
+            message = "⚠ SecureGate Pre-Launch Risk Assessment\n\n"
+
+            if critical:
+                message += "🚨 CRITICAL RISKS DETECTED:\n\n"
+                message += "\n\n".join(critical)
+                message += "\n\n"
+
+            if warnings:
+                message += "⚠ Configuration Warnings:\n\n"
+                message += "\n".join(warnings)
+                message += "\n\n"
+
+            message += (
+                "Starting monitoring with these issues may:\n"
+                "• Block internal network topology\n"
+                "• Lock you out of your own system\n"
+                "• Cause routing failures\n"
+                "• Disrupt normal traffic flow\n\n"
+                "Are you sure you want to continue?"
+            )
+
+            confirm = messagebox.askyesno(
+                "SecureGate Risk Warning",
+                message
+            )
+
+            if not confirm:
+                return
+    # ---- UPDATE ENV FILE ----
+    lines = []
+    found = False
+
+    with open(ENV_FILE, "r") as f:
+        for line in f:
+            if line.startswith("SECUREGATE_NETWORK_MONITOR"):
+                lines.append(f"SECUREGATE_NETWORK_MONITOR={new_value}\n")
+                found = True
+            else:
+                lines.append(line)
+
+    if not found:
+        lines.append(f"\nSECUREGATE_NETWORK_MONITOR={new_value}\n")
+
+    with open(ENV_FILE, "w") as f:
+        f.writelines(lines)
+
+    os.environ["SECUREGATE_NETWORK_MONITOR"] = new_value
+    SECUREGATE_NETWORK_MONITOR = new_value.lower() == "true"
+
+    # ---- Update Button UI Only ----
+    if SECUREGATE_NETWORK_MONITOR:
+        network_monitor_btn.config(
+            text="🟢 Network Monitor: ON",
+            bg="#2ecc71",
+            activebackground="#27ae60"
+        )
+    else:
+        network_monitor_btn.config(
+            text="🔴 Network Monitor: OFF",
+            bg="#e74c3c",
+            activebackground="#c0392b"
+        )
+
 
 def dashboardshow():
     global APP_STATE
@@ -1529,7 +2273,9 @@ def dashboardshow():
     APP_STATE["current_view"] = "dashboard"
     APP_STATE["current_page"] = 0
     APP_STATE["last_page_name"] = None
-    sidebar.pack(side="left", fill="y")
+    sidebar.grid(row=0, column=0, sticky="ns")
+
+
     global connection, cursor
 
     # Clear existing widgets
@@ -1546,22 +2292,45 @@ def dashboardshow():
     content_frame.configure(bg=BG_MAIN)
 
     # ---------------- 1. HEADER SECTION ----------------
+
     header_frame = tk.Frame(content_frame, bg=BG_MAIN)
     header_frame.pack(fill="x", padx=30, pady=(20, 10))
+    # ================= NETWORK MONITOR TOGGLE =================
+    # ================= NETWORK MONITOR TOGGLE =================
+    global network_monitor_btn
 
-    tk.Label(
+    if SECUREGATE_NETWORK_MONITOR:
+        btn_text = "🟢 Network Monitor: ON"
+        btn_color = "#2ecc71"
+        active_color = "#27ae60"
+    else:
+        btn_text = "🔴 Network Monitor: OFF"
+        btn_color = "#e74c3c"
+        active_color = "#c0392b"
+
+    network_monitor_btn = tk.Button(
         header_frame,
-        text="Security Command Center",
-        font=("Segoe UI", 24, "bold"),
-        fg=ACCENT_COLOR,
-        bg=BG_MAIN
-    ).pack(side="left")
+        text=btn_text,
+        font=("Segoe UI", 10, "bold"),
+        fg="white",
+        bg=btn_color,
+        activebackground=active_color,
+        relief="flat",
+        cursor="hand2",
+        padx=15,
+        pady=6,
+        command=toggle_network_monitor
+    )
+
+    network_monitor_btn.pack(side="right", padx=10)
+
 
     # ---------------- 2. CRITICAL ALERTS (TOP PRIORITY) ----------------
     # High-visibility container for active threats
+    # ================= ALERTS CONTAINER =================
     alerts_container = tk.LabelFrame(
-        content_frame, 
-        text=" 🚨 ACTIVE SECURITY THREATS ", 
+        content_frame,
+        text=" 🚨 ACTIVE SECURITY THREATS ",
         font=("Segoe UI", 11, "bold"),
         fg=ALERT_RED,
         bg=CARD_BG,
@@ -1572,6 +2341,8 @@ def dashboardshow():
         highlightthickness=1
     )
     alerts_container.pack(fill="x", padx=30, pady=10)
+
+    # ================= EXPORT BUTTON =================
     export_btn = tk.Button(
         alerts_container,
         text="⬇ Export Alerts to PDF",
@@ -1586,46 +2357,128 @@ def dashboardshow():
     )
     export_btn.pack(anchor="e", pady=(0, 8))
 
-    # Treeview Style for Alerts
+    # ================= TREEVIEW STYLE =================
     style = ttk.Style()
     style.theme_use("clam")
-    style.configure("Alert.Treeview", rowheight=30, font=("Segoe UI", 9))
-    style.configure("Alert.Treeview.Heading", font=("Segoe UI", 10, "bold"), background="#fdf2f2")
+    style.configure(
+        "Alert.Treeview",
+        rowheight=30,
+        font=("Segoe UI", 9),
+        background="white",
+        fieldbackground="white"
+    )
+    style.configure(
+        "Alert.Treeview.Heading",
+        font=("Segoe UI", 10, "bold"),
+        background="#fdf2f2"
+    )
 
-    columns_alert = ("attack_type", "src_ip", "severity", "hit_count", "last_detected")
-    alert_tree = ttk.Treeview(alerts_container, columns=columns_alert, show="headings", height=4, style="Alert.Treeview")
-    
+    # ================= TREEVIEW COLUMNS =================
+    columns_alert = (
+        "attack_type",
+        "src_ip",
+        "first_detected",
+        "last_detected",
+        "hit_count",
+        "severity",
+        "actions_taken",
+        "action_expires_at",
+        "is_active"
+    )
+
+    alert_tree = ttk.Treeview(
+        alerts_container,
+        columns=columns_alert,
+        show="headings",
+        height=5,
+        style="Alert.Treeview"
+    )
+
+    # ================= HEADINGS =================
     alert_tree.heading("attack_type", text="Attack Type")
     alert_tree.heading("src_ip", text="Source IP")
-    alert_tree.heading("severity", text="Severity")
-    alert_tree.heading("hit_count", text="Hits")
+    alert_tree.heading("first_detected", text="First Detected")
     alert_tree.heading("last_detected", text="Last Detected")
+    alert_tree.heading("hit_count", text="Hits")
+    alert_tree.heading("severity", text="Severity")
+    alert_tree.heading("actions_taken", text="Actions Taken")
+    alert_tree.heading("action_expires_at", text="Action Expires")
+    alert_tree.heading("is_active", text="Active")
 
-    # Column Formatting
-    alert_tree.column("severity", width=100, anchor="center")
-    alert_tree.column("hit_count", width=80, anchor="center")
+    # ================= COLUMN FORMATTING =================
+    alert_tree.column("attack_type", width=140)
+    alert_tree.column("src_ip", width=130)
+    alert_tree.column("first_detected", width=150)
+    alert_tree.column("last_detected", width=150)
+    alert_tree.column("hit_count", width=70, anchor="center")
+    alert_tree.column("severity", width=90, anchor="center")
+    alert_tree.column("actions_taken", width=220)
+    alert_tree.column("action_expires_at", width=150)
+    alert_tree.column("is_active", width=70, anchor="center")
 
-    # Severity Tags
+    # ================= SEVERITY TAGS =================
     alert_tree.tag_configure("HIGH", background="#ffcccc", foreground="#900")
-    alert_tree.tag_configure("MEDIUM", background="#ffe0b3")
-    alert_tree.tag_configure("LOW", background="#d4edda")
+    alert_tree.tag_configure("MEDIUM", background="#ffe0b3", foreground="#7a4a00")
+    alert_tree.tag_configure("LOW", background="#d4edda", foreground="#155724")
 
-    # Fetch and Insert Alert Data
+    # ================= FETCH & INSERT DATA =================
     try:
         database = db()
         conn, cur = database[0], database[1]
+
         cur.execute("""
-            SELECT attack_type, src_ip, severity, hit_count, last_detected 
-            FROM attack_state WHERE is_active = 1 
-            ORDER BY FIELD(severity, 'HIGH', 'MEDIUM', 'LOW'), last_detected DESC
+            SELECT
+                attack_type,
+                src_ip,
+                first_detected,
+                last_detected,
+                hit_count,
+                severity,
+                actions_taken,
+                action_expires_at,
+                is_active
+            FROM attack_state
+            WHERE is_active = 1
+            ORDER BY FIELD(severity, 'HIGH', 'MEDIUM', 'LOW'),
+                    last_detected DESC
         """)
+
         for row in cur.fetchall():
-            alert_tree.insert("", "end", values=row, tags=(row[2],))
+            # Parse actions_taken JSON for clean display
+            actions = row[6]
+            try:
+                actions = ", ".join(json.loads(actions))
+            except Exception:
+                pass
+
+            display_row = (
+                row[0],  # attack_type
+                row[1],  # src_ip
+                row[2],  # first_detected
+                row[3],  # last_detected
+                row[4],  # hit_count
+                row[5],  # severity
+                actions, # actions_taken
+                row[7],  # action_expires_at
+                "YES" if row[8] else "NO"
+            )
+
+            alert_tree.insert(
+                "",
+                "end",
+                values=display_row,
+                tags=(row[5],)   # Severity tag
+            )
+
     except Exception as e:
-        tk.Label(alerts_container, text=f"Update Error: {e}", bg=CARD_BG, fg="red").pack()
-
+        tk.Label(
+            alerts_container,
+            text=f"Update Error: {e}",
+            bg=CARD_BG,
+            fg="red"
+        ).pack()
+    
     alert_tree.pack(fill="x", expand=True)
-
     # ---------------- 3. ANALYTICS SECTION (VISUALS & LOGS) ----------------
     # A subtle title to separate the data
     tk.Label(
@@ -1755,7 +2608,7 @@ def datamanage(page):
         "IP Monitor": "ip",
         "Logs": "iprequest_junction",
         "Port Monitor": "request_type",
-        "Protocol Monitor": "Network_protocol",
+        "Protocol Monitor": "network_protocol",
         "blocked IP": "ip" # We filter this in the query usually
     }
     return mapping.get(page, page)
@@ -1825,7 +2678,7 @@ def fetch_data_in_thread(page_name, reset_pagination):
             "IP Monitor": "ip",
             "Logs": "iprequest_junction",
             "Port Monitor": "request_type",
-            "Protocol Monitor": "Network_protocol",
+            "Protocol Monitor": "network_protocol",
        }
 
         fetched_rows = None
@@ -1949,13 +2802,16 @@ root.rowconfigure(0, weight=1)
 
 
 
+root.grid_rowconfigure(0, weight=1)
+root.grid_columnconfigure(1, weight=1)
+sidebar = tk.Frame(root, width=180, bg="#2c3e50")
+sidebar.grid(row=0, column=0, sticky="ns")
 
+sidebar.grid_propagate(False)  # 🔒 lock sidebar width
 
-sidebar = tk.Frame(root, width=150, bg="#2c3e50")
-sidebar.pack(side="left", fill="y")
+content_frame = tk.Frame(root, bg="white")
+content_frame.grid(row=0, column=1, sticky="nsew")
 
-content_frame = tk.Frame(root,bg="white")
-content_frame.pack(side="right",expand=True,fill="both")
 
 pages = ["Dashboard", "IP Monitor", "Port Monitor","Protocol Monitor","blocked IP", "Logs","Setting", "Exit"]
 
@@ -2056,7 +2912,6 @@ def show_page_data(preserve_state=True):
     # !!! CRITICAL FIX !!!
     # Prevent the frame from expanding to fit wide tables. 
     # This keeps your Sidebar visible regardless of column count.
-    content_frame.pack_propagate(False)
 
     # --- HEADER ---
     header_frame = tk.Frame(content_frame, bg=BG_MAIN)

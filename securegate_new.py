@@ -95,7 +95,6 @@ def log_error(message, exc=None):
 # REQUIRED CONFIG FIELDS + DEFAULTS
 # -------------------------------------------------
 REQUIRED_ENV = {
-    # ---- Database ----
     "SECUREGATE_DB_HOST": "localhost",
     "SECUREGATE_DB_PORT": "3306",
     "SECUREGATE_DB_USER": "root",
@@ -162,9 +161,6 @@ def build_db_config(allow_no_db=False):
     return config
 
 
-# -------------------------------------------------
-# VALIDATE ENV FILE CONTENT
-# -------------------------------------------------
 def validate_env():
     errors = []
 
@@ -198,10 +194,10 @@ def validate_env():
                 errors.append(f"Invalid float value for {key}: {value}")
 
     if errors:
-        print("\n❌ CONFIGURATION ERRORS DETECTED:\n")
+        print("\n CONFIGURATION ERRORS DETECTED:\n")
         for err in errors:
             print(f"   • {err}")
-        print("\n🛑 Fix securegate.env and restart SecureGate\n")
+        print("\n Fix securegate.env and restart SecureGate\n")
         sys.exit(1)   # ✅ MUST EXIT
 
 # -------------------------------------------------
@@ -280,7 +276,7 @@ def load_securegate_config():
     # -------------------------------------------------
     # SUCCESS OUTPUT
     # -------------------------------------------------
-    print("\n✅ SecureGate configuration loaded successfully")
+    print("\n SecureGate configuration loaded successfully")
     print(f"   Interface  : {INTERFACE_NAME}")
     print(f"   Database   : {SECUREGATE_DB_NAME}@{SECUREGATE_DB_HOST}")
     print(f"   Queue Size : {SECUREGATE_QUEUE_MAXSIZE}")
@@ -303,7 +299,7 @@ def ensure_mysql_ready_or_exit():
             return False
 
     os_name = platform.system()
-    print("\n🔍 Checking MySQL availability...\n")
+    print("\n Checking MySQL availability...\n")
 
     # 1️⃣ Direct connection test
     if can_connect():
@@ -311,7 +307,7 @@ def ensure_mysql_ready_or_exit():
         return
 
     # ==================================================
-    # 🐧 LINUX
+    # LINUX
     # ==================================================
     if os_name == "Linux":
         print("⚠ MySQL not reachable, starting Linux service...\n")
@@ -324,7 +320,7 @@ def ensure_mysql_ready_or_exit():
                     print(f"✔ MySQL ready via {service}")
                     return
 
-        print("\n❌ MySQL could not be started (Linux)")
+        print("\n MySQL could not be started (Linux)")
         sys.exit(1)
 
     # ==================================================
@@ -334,7 +330,7 @@ def ensure_mysql_ready_or_exit():
         print("⚠ MySQL not reachable, starting Windows service...\n")
 
         for service in ("MySQL80", "MySQL"):
-            print(f"▶ Trying service: {service}")
+            print(f" Trying service: {service}")
             subprocess.call(
                 ["sc", "start", service],
                 stdout=subprocess.DEVNULL,
@@ -348,10 +344,10 @@ def ensure_mysql_ready_or_exit():
                     print(f"✔ MySQL ready via {service}")
                     return
 
-        print("\n❌ MySQL could not be started (Windows)")
+        print("\n MySQL could not be started (Windows)")
      
     else:
-        print(f"❌ Unsupported OS: {os_name}")
+        print(f" Unsupported OS: {os_name}")
         sys.exit(1)
 
 load_securegate_config()
@@ -481,33 +477,43 @@ class SYS_INFO:
 
             #all setting
             cursor.execute("""
-            
-CREATE TABLE IF NOT EXISTS settings (
-    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    admin_name VARCHAR(50) ,
-    password_hash VARCHAR(255) ,
-    email VARCHAR(50),
-    phone VARCHAR(13),
+     CREATE TABLE IF NOT EXISTS settings (
+    id INT(11) NOT NULL AUTO_INCREMENT,
 
-    request_per_ip_per_hour INT,           -- in minutes
-    max_requests_per_minute JSON,
+    admin_name VARCHAR(50) DEFAULT NULL,
+    password_hash VARCHAR(255) DEFAULT NULL,
+    email VARCHAR(50) DEFAULT NULL,
+    phone VARCHAR(13) DEFAULT NULL,
 
-    honeypot_ips VARCHAR(255),
-    allowed_ports LONGTEXT,
-    sensitive_folders VARCHAR(255),
+    request_per_ip_per_hour INT(11) DEFAULT NULL,
 
-    whitelisted_ips LONGTEXT NULL,
-    blacklisted_ips LONGTEXT NULL,
+    -- JSON-like data stored as text
+    max_requests_per_minute LONGTEXT DEFAULT NULL,
 
-    upload_folder VARCHAR(255),
-    email_alerts_enabled BOOLEAN,
-    email_token TEXT,
-    sender_email TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    honeypot_ips VARCHAR(255) DEFAULT NULL,
 
-                           )
+    allowed_ports LONGTEXT DEFAULT NULL,
 
+    sensitive_folders VARCHAR(255) DEFAULT NULL,
+
+    whitelisted_ips LONGTEXT DEFAULT NULL,
+    blacklisted_ips LONGTEXT DEFAULT NULL,
+
+    remote_upload_directory VARCHAR(255) DEFAULT NULL,
+
+    email_alerts_enabled TINYINT(1) NOT NULL DEFAULT 0,
+
+    email_token TEXT DEFAULT NULL,
+
+    suspicious_activity_alert_mail TEXT DEFAULT NULL,
+
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL
+        DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (id)
+)
 
 """)
             cursor.execute("""CREATE TABLE IF NOT EXISTS network_protocol (
@@ -588,7 +594,7 @@ CREATE TABLE IF NOT EXISTS settings (
         # Continuously monitor network requests
     def monitor_requests(self):
         global counter_temp2
-
+        
         log_file_path = SECUREGATE_LOG_FILE_STAGE2
         remaining_lines = []
         try:
@@ -612,8 +618,7 @@ CREATE TABLE IF NOT EXISTS settings (
                         print(f"Error parsing line: {line}\nReason: {e}")
                         remaining_lines.append(line + '\n')  
 
-                #print("for loop chya baher")
-
+                
                 # After processing, overwrite file with error vale lines
                 with open(log_file_path, "w") as f:
                     f.writelines(remaining_lines)
@@ -777,15 +782,12 @@ CREATE TABLE IF NOT EXISTS settings (
                 print("[Background thread error]:", e)
     @staticmethod
     def upsert_attack(cursor, attack_type, src_ip, fingerprint, severity):
-        
-
-
 
         cursor.execute("""
         SELECT 1
         FROM attack_state
         WHERE attack_type = %s AND fingerprint = %s
-            LIMIT 1
+        LIMIT 1
         """, (attack_type, fingerprint))
 
         exists = cursor.fetchone()
@@ -801,9 +803,11 @@ CREATE TABLE IF NOT EXISTS settings (
             """, (attack_type, fingerprint))
 
             connection.commit()
+
         else:
             attacks = []
-            # 1️⃣ EMAIL ALERT
+
+            # 1️ EMAIL ALERT
             try:
                 subject, message = EMERGENCY_ALERT.generate_email(
                     alert_type="intrusion",
@@ -813,34 +817,42 @@ CREATE TABLE IF NOT EXISTS settings (
                         "protocol": attack_type
                     }
                 )
-                EMERGENCY_ALERT.send_email_alert(subject, message)
-                attacks.append("EMAIL_ALERT")
+
+                sent = EMERGENCY_ALERT.send_email_alert(subject, message)
+                if sent is True:
+                    attacks.append("EMAIL_ALERT")
+
             except Exception as e:
                 log_error("Engine crashed during startup", e)
                 print("[EMAIL ALERT FAILED]", e)
 
-
-            # 2️⃣ FILE UPLOAD
+            # 2️ FILE UPLOAD
             try:
-                EMERGENCY_ALERT.upload_sensitive_files_to_drive()
-                attacks.append("FILE_UPLOAD")
+                uploaded = EMERGENCY_ALERT.upload_sensitive_files_to_drive()
+                if uploaded is True:
+                    attacks.append("FILE_UPLOAD")
+
             except Exception as e:
                 log_error("Engine crashed during startup", e)
                 print("[FILE UPLOAD FAILED]", e)
 
+            # 3️ HONEYPOT DIVERSION
             if isinstance(src_ip, str) and "," in src_ip:
-                # Multiple IPs
                 for attacker_ip in src_ip.split(","):
                     attacker_ip = attacker_ip.strip()
                     if attacker_ip:
-                        EMERGENCY_ALERT.honeypot_diversion(attacker_ip, divert=True)
-                        attacks.append("HONEYPOT_DIVERT")
+                        diverted = EMERGENCY_ALERT.honeypot_diversion(
+                            attacker_ip, divert=True
+                        )
+                        if diverted is True:
+                            attacks.append("HONEYPOT_DIVERT")
             else:
-                # Single IP
-                EMERGENCY_ALERT.honeypot_diversion(src_ip, divert=True)
-                attacks.append("HONEYPOT_DIVERT")
+                diverted = EMERGENCY_ALERT.honeypot_diversion(src_ip, divert=True)
+                if diverted is True:
+                    attacks.append("HONEYPOT_DIVERT")
 
             actions_json = json.dumps(attacks)
+
             query = """
             INSERT INTO attack_state
                 (
@@ -883,10 +895,13 @@ CREATE TABLE IF NOT EXISTS settings (
                     actions_json
                 )
             )
+
+            connection.commit()
+
     def check_suspiciousness(self):
         global insertion_time, timer, ipreqlimit
 
-        # ✅ ALWAYS initialize (prevents UnboundLocalError)
+        #  ALWAYS initialize (prevents UnboundLocalError)
         reqpertime_dict = {}
 
         try:
@@ -906,7 +921,7 @@ CREATE TABLE IF NOT EXISTS settings (
                     # JSON invalid → keep empty dict, do NOT crash
                     log_error("Invalid JSON in max_requests_per_minute", e)
 
-            # ✅ SAFE: if empty or invalid, just skip this section
+            # SAFE: if empty or invalid, just skip this section
             if isinstance(reqpertime_dict, dict) and reqpertime_dict:
 
                 for timer, ipreqlimit in reqpertime_dict.items():
@@ -919,18 +934,18 @@ CREATE TABLE IF NOT EXISTS settings (
                     time_ago = insertion_time - timedelta(minutes=timer)
 
                     self.cursor.execute("""
-                        SELECT ip_address, COUNT(*) as ip_count
+                        SELECT src_ip, COUNT(*) as ip_count
                         FROM iprequest_junction
                         WHERE request_time >= %s
-                        GROUP BY ip_address
+                        GROUP BY src_ip
                     """, (time_ago,))
                     ip_counts = self.cursor.fetchall()
 
                     self.cursor.execute("""
-                        SELECT port_number, COUNT(*) as port_count
+                        SELECT dst_port, COUNT(*) as port_count
                         FROM iprequest_junction
                         WHERE request_time >= %s
-                        GROUP BY port_number
+                        GROUP BY dst_port
                     """, (time_ago,))
                     port_counts = self.cursor.fetchall()
 
@@ -1106,94 +1121,127 @@ CREATE TABLE IF NOT EXISTS settings (
 
 
 
-    def checkblk(self,option,ipdata,limit,time_interval):
-       
-        
-        if option=="ip":
-            ip=ipdata[0]
-            req_count=ipdata[1]
-            print(req_count)
-            print("/n")
-            if  ips.is_ip_suspicious(req_count,limit):         #req>limit:
-                reqps=int(((req_count-limit)/limit)*100)
-                ips.block_ip(ip,reqps)
-                print("IP BLOCK:-",ip)
-            print("debug")
-        '''if option=="port":
-            port,port_request=req
-            if request.is_port_suspicious(port_request,limit):
-                request.securegate_response(port,port_request,limit)
-            
-            if option=="iprequest":
-                count=ip
-                if iprequest.is_iprequest_suspicious(count,limit):
-                    iprequest.securegate_response(ipdata,limit,time_interval)        
-            if option=="network_protocol":
-                count=ip
-                if network_protocol.is_iprequest_suspicious(count,limit):
-                    network_protocol.securegate_response(ipdata,limit,time_interval)        
-            '''
-        
+    def checkblk(self, option, ipdata, limit, time_interval):
+        """
+        Handles detection + blocking ONLY.
+        Cleanup / unblock / honeypot revert MUST NOT be here.
+        """
 
-        cursor.execute("""
-    SELECT
-        id,
-        src_ip,
-        actions_taken
-    FROM attack_state
-    WHERE
-        is_active = 1
-        AND action_expires_at < NOW()
-        """)
+        # ================= IP-BASED CHECK =================
+        if option == "ip":
+            ip = ipdata[0]
+            req_count = ipdata[1]
 
-        expired_attacks = cursor.fetchall()
-        
-        for attack_id, attacker_ip, actions_json in expired_attacks:
-            actions = json.loads(actions_json)
+            print(f"[DEBUG] IP={ip}, Requests={req_count}, Limit={limit}")
 
-            # 🔁 Honeypot revert
-            if "HONEYPOT_DIVERT" in actions:
+            try:
+                if ips.is_ip_suspicious(req_count, limit):
+                    # percentage over limit
+                    reqps = int(((req_count - limit) / limit) * 100)
+                    ips.block_ip(ip, reqps)
+                    print(f"[BLOCK] IP BLOCKED: {ip} ({reqps}%)")
+            except Exception as e:
+                log_error("IP block check failed", e)
+
+        # ================= PORT CHECK (future) =================
+        elif option == "port":
+            # port, port_request = ipdata
+            # if request.is_port_suspicious(port_request, limit):
+            #     request.securegate_response(port, port_request, limit)
+            pass
+
+        # ================= TOTAL REQUEST CHECK (future) =================
+        elif option == "iprequest":
+            # total_requests = ipdata
+            # if iprequest.is_iprequest_suspicious(total_requests, limit):
+            #     iprequest.securegate_response(ipdata, limit, time_interval)
+            pass
+
+        # ================= PROTOCOL CHECK (future) =================
+        elif option == "network_protocol":
+            # protocol, proto_count = ipdata
+            # if network_protocol.is_iprequest_suspicious(proto_count, limit):
+            #     network_protocol.securegate_response(ipdata, limit, time_interval)
+            pass
+
+    def cleanup_expired_attacks(self):
+        """
+        Handles ONLY:
+        - Honeypot revert
+        - IP unblock (when block_time expired)
+        - attack_state deactivation
+
+         This function MUST run once per cycle.
+        """
+
+        try:
+            self.cursor.execute("""
+                SELECT
+                    id,
+                    src_ip,
+                    actions_taken
+                FROM attack_state
+                WHERE
+                    is_active = 1
+                    AND action_expires_at IS NOT NULL
+                    AND action_expires_at <= NOW()
+            """)
+
+            expired_attacks = self.cursor.fetchall()
+
+            if not expired_attacks:
+                return
+
+            for attack_id, attacker_ip, actions_json in expired_attacks:
+
                 try:
-                    EMERGENCY_ALERT.honeypot_diversion(attacker_ip, divert=False)
-                except Exception as e:
-                    log_error("Engine crashed during startup", e)
-                    print("[HONEYPOT REVERT FAILED]", e)
+                    actions = json.loads(actions_json) if actions_json else []
+                except Exception:
+                    actions = []
 
-            # 🔁 File restore
-            if "FILE_UPLOAD" in actions:
-                try:
-                    EMERGENCY_ALERT.restore_permissions()  # or your restore logic
-                except Exception as e:
-                    log_error("Engine crashed during startup", e)
-                    print("[FILE RESTORE FAILED]", e)
+                print(f"[CLEANUP] Expired attack for {attacker_ip}")
 
-            if "BLOCK_IP" in actions:
-                try:
-                    cursor.execute("""
-                        SELECT is_blocked, block_time
-                        FROM ip
-                        WHERE ip_address = %s
-                        LIMIT 1
-                    """, (attacker_ip,))
+                # ================= HONEYPOT REVERT =================
+                if "HONEYPOT_DIVERT" in actions:
+                    try:
+                        EMERGENCY_ALERT.honeypot_diversion(attacker_ip, divert=False)
+                        print(f"[CLEANUP] Honeypot reverted for {attacker_ip}")
+                    except Exception as e:
+                        log_error("Honeypot revert failed", e)
 
-                    row = cursor.fetchone()
+                # ================= IP UNBLOCK =================
+                if "BLOCK_IP" in actions:
+                    try:
+                        self.cursor.execute("""
+                            SELECT is_blocked, block_time
+                            FROM ip
+                            WHERE ip_address = %s
+                            LIMIT 1
+                        """, (attacker_ip,))
 
-                    if row:
-                        is_blocked, block_time = row
+                        row = self.cursor.fetchone()
 
-                        # Unblock ONLY if block time expired
-                        if is_blocked == 1 and block_time and block_time <= datetime.now():
-                            IPS.unblock_ip(attacker_ip)
-                        else:
-                            # Still blocked due to other reasons
-                            pass
+                        if row:
+                            is_blocked, block_time = row
 
-                except Exception as e:
-                    log_error("Engine crashed during startup", e)
-                    print("[IP UNBLOCK CHECK FAILED]", e)
+                            if is_blocked == 1 and block_time and block_time <= datetime.now():
+                                ips.unblock_ip(attacker_ip)
+                                print(f"[CLEANUP] IP unblocked: {attacker_ip}")
 
+                    except Exception as e:
+                        log_error("IP unblock failed", e)
 
+                # ================= DEACTIVATE ATTACK =================
+                self.cursor.execute("""
+                    UPDATE attack_state
+                    SET is_active = 0
+                    WHERE id = %s
+                """, (attack_id,))
 
+            self.connection.commit()
+
+        except Exception as e:
+            log_error("cleanup_expired_attacks failed", e)
 
 
 
@@ -1515,7 +1563,7 @@ class IPS:
                     ip_list.remove(ip)
 
             elif action == "all":
-                return ip_list  # ✅ ALWAYS list
+                return ip_list  #  ALWAYS list
 
             final_json = json.dumps(ip_list)
             cursor.execute(
@@ -1524,12 +1572,12 @@ class IPS:
             )
             connection.commit()
 
-            return ip_list  # ✅ return updated list
+            return ip_list  #  return updated list
 
         except Exception as e:
             log_error("Engine crashed during startup", e)
             print("[BLACKLIST ERROR]:", e)
-            return []        # ✅ NEVER None
+            return []        #  NEVER None
 
     
     def normalize_ip(ip_str):
@@ -1827,7 +1875,7 @@ class EMERGENCY_ALERT:
             )
 
         elif alert_type == "ip_block":
-            subject = f"🚫 IP Blocked - {data.get('ip', 'Unknown')}"
+            subject = f" IP Blocked - {data.get('ip', 'Unknown')}"
             message = (
                 f"The following IP has been blocked for exceeding limits:\n"
                 f"IP Address: {data.get('ip', 'Unknown')}\n"
@@ -1837,7 +1885,7 @@ class EMERGENCY_ALERT:
             )
 
         elif alert_type == "honeypot_trigger":
-            subject = f"🐍 Honeypot Triggered - {data.get('ip', 'Unknown')}"
+            subject = f" Honeypot Triggered - {data.get('ip', 'Unknown')}"
             message = (
                 f"Honeypot diversion triggered for IP: {data.get('ip', 'Unknown')}\n"
                 f"Timestamp: {data.get('time', 'Unknown')}\n"
@@ -1846,17 +1894,17 @@ class EMERGENCY_ALERT:
             )
 
         else:
-            subject = "📢 SecureGate Notification"
+            subject = " SecureGate Notification"
             message = f"An event has occurred:\n{data}"
 
         return subject, message
 
 
-    # ✅ Function to Fetch Email Data (API Token, Sender, Receiver)
+    #  Function to Fetch Email Data (API Token, Sender, Receiver)
     def get_email(role):
         try:
-            if role == "sender":
-                cursor.execute("SELECT email_token, sender_email FROM settings LIMIT 1")
+            if role == "receiver":
+                cursor.execute("SELECT email_token,suspicious_activity_alert_mail FROM settings LIMIT 1")
                 result = cursor.fetchone()
                
                 if result:
@@ -1865,7 +1913,7 @@ class EMERGENCY_ALERT:
                     print("[!] No sender token/email found.")
                     return None
 
-            elif role == "receiver":
+            elif role == "sender":
                 cursor.execute("SELECT email FROM settings LIMIT 1")
                 result = cursor.fetchone()
               
@@ -1885,121 +1933,177 @@ class EMERGENCY_ALERT:
             return None
 
 
-    # ✅ Function to Send Email via resend API
+    #  Function to Send Email via resend API
     def send_email_alert(subject, message):
-        # --- Fetch email info from DB ---
-        email_info = EMERGENCY_ALERT.get_email("sender")
-        if not email_info:
-            print("[!] Cannot fetch sender info.")
-            return
-
-        api_token, sender_email = email_info
-        receiver_email = EMERGENCY_ALERT.get_email("receiver") or sender_email
-
-        if not api_token:
-            print("[!] Missing Resend API token.")
-            return
-
-        # --- Set Resend API key ---
-        resend.api_key = api_token
-
         try:
-            # --- Send Email ---
+            # ---------- FETCH EMAIL SETTINGS ----------
+
+            
+            row=EMERGENCY_ALERT.get_email("receiver")
+            if not row:
+                print("[EMAIL] Email configuration not found.")
+                return False
+
+            api_token, receiver_email = row
+
+            if not api_token:
+                print("[EMAIL] API token missing.")
+                return False
+
+            if not receiver_email:
+                print("[EMAIL] Receiver email missing.")
+                return False
+
+            # ---------- CONFIGURE RESEND ----------
+            import resend
+            resend.api_key = api_token
+
+            # ---------- BUILD HTML EMAIL ----------
+            html_message = f"""
+            <div style="font-family:Segoe UI,Arial,sans-serif">
+                <h2 style="color:#dc2626">🚨 SecureGate Security Alert</h2>
+
+                <pre style="background:#f3f4f6;padding:12px;border-radius:6px;">
+    {message}
+                </pre>
+
+                <p style="margin-top:12px;color:#555">
+                    This is an automated alert from SecureGate Firewall System.
+                </p>
+            </div>
+            """
+
+            # ---------- SEND EMAIL ----------
             response = resend.Emails.send({
-                "from": "onboarding@resend.dev",
+                "from": "SecureGate <onboarding@resend.dev>",
                 "to": receiver_email,
                 "subject": subject,
-                "html": f"<h3>{subject}</h3><p>{message}</p>"
+                "html": html_message
             })
 
-            print("[+] Email sent successfully via Resend!")
-            print("Response:", response)
+            print("[EMAIL SENT]", receiver_email)
+            print("[RESEND RESPONSE]", response)
+
+            return True
 
         except Exception as e:
-            log_error("Engine crashed during startup", e)
-            print(f"[!] Failed to send email: {e}")
-    
+            log_error("Email sending failed", e)
+            print("[EMAIL ERROR]", e)
+            return False
+
 
 
     def upload_sensitive_files_to_drive():
         try:
-            cursor.execute("SELECT upload_folder, sensitive_folders FROM settings LIMIT 1")
+            cursor.execute(
+                "SELECT remote_upload_directory, sensitive_folders FROM settings LIMIT 1"
+            )
             result = cursor.fetchone()
-            if not result: 
+
+            if not result:
                 print("[!] No folder paths found in database.")
-                return
+                return False
 
-            upload_folder, sensitive_folder = result
-            if not upload_folder or not sensitive_folder:
+            remote_upload_directory, sensitive_folder = result
 
-                print(" Missing upload or sensitive folder path.")
-                return
+            if not remote_upload_directory or not sensitive_folder:
+                print("[!] Missing upload or sensitive folder path.")
+                return False
 
+            # ================= UPLOAD =================
+            cmd = ["rclone", "copy", sensitive_folder, remote_upload_directory]
+            result = subprocess.run(cmd, capture_output=True, text=True)
 
-            try:
-                #SecureGate_Backups:secret.txt
-                cmd = ["rclone", "copy", sensitive_folder, upload_folder,"--progress"]
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                print(result.returncode)
-                if result.returncode == 0:
-                    print("[UPLOAD SUCCESS]", sensitive_folder)
-                else:
-                    
-                    print("[UPLOAD ERROR]", result.stderr)
+            if result.returncode != 0:
+                print("[UPLOAD ERROR]", result.stderr)
+                return False
 
-            except Exception as e:
-                log_error("Engine crashed during startup", e)
-                print("[EXCEPTION]", e)
-            
-            print(f"[+] All sensitive files uploaded to '{upload_folder}' successfully!")
+            print("[UPLOAD SUCCESS]", sensitive_folder)
 
+            # ================= ENCRYPT (OPTIONAL, POST-UPLOAD) =================
             if os.path.isfile(sensitive_folder):
                 try:
+                    from cryptography.fernet import Fernet
+
                     key_file = "securegate.key"
 
-                    # Generate key once
                     if not os.path.exists(key_file):
-                        key = fernet.generate_key()
+                        key = Fernet.generate_key()
                         with open(key_file, "wb") as kf:
                             kf.write(key)
                     else:
                         with open(key_file, "rb") as kf:
                             key = kf.read()
 
-                    fernet = fernet(key)
+                    fernet = Fernet(key)
 
-                    # Read original file
                     with open(sensitive_folder, "rb") as f:
                         data = f.read()
 
-                    # Encrypt
                     encrypted_data = fernet.encrypt(data)
 
                     encrypted_path = sensitive_folder + ".enc"
                     with open(encrypted_path, "wb") as f:
                         f.write(encrypted_data)
 
-                    print(f"[SECURE] File encrypted: {encrypted_path}")
-
-                    # Remove original after encryption
                     os.remove(sensitive_folder)
-                    print(f"[INFO] Original file removed after encryption")
+
+                    print(f"[SECURE] File encrypted & original removed")
 
                 except Exception as e:
-                    log_error("Engine crashed during startup", e)
-                    print(f"[ERROR] Encryption failed: {e}")
-            else:
-                print(f"[INFO] File not found: {sensitive_folder}")
+                    log_error("Encryption failed", e)
+                    print("[WARN] Upload succeeded but encryption failed")
 
+            return True   #  SINGLE SUCCESS EXIT
 
         except Exception as e:
-            log_error("Engine crashed during startup", e)
-            print(f"[!] Error: {e}")  
+            log_error("Upload process crashed", e)
+            print("[!] Fatal error:", e)
+            return False
 
+    def decrypt_file(encrypted_file_path):
+        try:
+            from cryptography.fernet import Fernet
+            import os
 
+            key_file = "securegate.key"
 
+            # -------- CHECK KEY --------
+            if not os.path.exists(key_file):
+                print("[DECRYPT ERROR] Key file not found.")
+                return False
 
+            with open(key_file, "rb") as kf:
+                key = kf.read()
 
+            fernet = Fernet(key)
+
+            # -------- CHECK FILE --------
+            if not os.path.exists(encrypted_file_path):
+                print("[DECRYPT ERROR] Encrypted file not found.")
+                return False
+
+            with open(encrypted_file_path, "rb") as ef:
+                encrypted_data = ef.read()
+
+            # -------- DECRYPT --------
+            decrypted_data = fernet.decrypt(encrypted_data)
+
+            # Remove .enc extension
+            original_path = encrypted_file_path.replace(".enc", "")
+
+            with open(original_path, "wb") as df:
+                df.write(decrypted_data)
+
+            print(f"[DECRYPT SUCCESS] File restored: {original_path}")
+
+            return True
+
+        except Exception as e:
+            log_error("Decryption failed", e)
+            print("[DECRYPT ERROR]", e)
+            return False
+    
 
 
     def honeypot_diversion(attacker_ip, divert, port=None):
@@ -2014,129 +2118,130 @@ class EMERGENCY_ALERT:
             row = cursor.fetchone()
             if not row or not row[0]:
                 print("[!] No honeypot IP configured")
-                return
+                return False   #  ADDED
             honeypot_ip = row[0].split(",")[0].strip()
         except Exception as e:
             log_error("Engine crashed during startup", e)
             print("[!] Honeypot fetch failed:", e)
-            return
+            return False       #  ADDED
 
         IPTABLES = "/usr/sbin/iptables"
 
         # ====================== LINUX ======================
         if os_name == "Linux":
-
-            # Ensure forwarding
-            subprocess.run(
-                ["sysctl", "-w", "net.ipv4.ip_forward=1"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-
-            # ---------------- ADD RULES ----------------
-            if divert:
+            try:
+                # Ensure forwarding
                 subprocess.run(
-                    [
-                        IPTABLES, "-t", "nat", "-I", "PREROUTING",
-                        "-s", attacker_ip,
-                        "-j", "DNAT",
-                        "--to-destination", honeypot_ip
-                    ],
+                    ["sysctl", "-w", "net.ipv4.ip_forward=1"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                     check=True
                 )
 
-                subprocess.run(
-                    [
-                        IPTABLES, "-I", "FORWARD",
-                        "-s", attacker_ip,
-                        "-d", honeypot_ip,
-                        "-j", "ACCEPT"
-                    ],
-                    check=True
-                )
-
-                subprocess.run(
-                    [
-                        IPTABLES, "-I", "FORWARD",
-                        "-s", honeypot_ip,
-                        "-d", attacker_ip,
-                        "-j", "ACCEPT"
-                    ],
-                    check=True
-                )
-
-                print(f"[+] Diversion enabled for {attacker_ip}")
-                return
-
-            # ---------------- REMOVE ALL RULES ----------------
-            print(f"[-] FULL cleanup for {attacker_ip}")
-
-            def delete_matching_rules(table, chain, match_tokens):
-                while True:
-                    result = subprocess.run(
-                        [IPTABLES, "-t", table, "-L", chain, "-n", "--line-numbers"],
-                        capture_output=True,
-                        text=True
+                # ---------------- ADD RULES ----------------
+                if divert:
+                    subprocess.run(
+                        [
+                            IPTABLES, "-t", "nat", "-I", "PREROUTING",
+                            "-s", attacker_ip,
+                            "-j", "DNAT",
+                            "--to-destination", honeypot_ip
+                        ],
+                        check=True
                     )
 
-                    lines = result.stdout.splitlines()
-                    deleted = False
+                    subprocess.run(
+                        [
+                            IPTABLES, "-I", "FORWARD",
+                            "-s", attacker_ip,
+                            "-d", honeypot_ip,
+                            "-j", "ACCEPT"
+                        ],
+                        check=True
+                    )
 
-                    for line in reversed(lines):
-                        if all(token in line for token in match_tokens):
-                            rule_num = line.split()[0]
-                            subprocess.run(
-                                [IPTABLES, "-t", table, "-D", chain, rule_num],
-                                check=True
-                            )
-                            deleted = True
+                    subprocess.run(
+                        [
+                            IPTABLES, "-I", "FORWARD",
+                            "-s", honeypot_ip,
+                            "-d", attacker_ip,
+                            "-j", "ACCEPT"
+                        ],
+                        check=True
+                    )
+
+                    print(f"[+] Diversion enabled for {attacker_ip}")
+                    return True    #  ADDED
+
+                # ---------------- REMOVE ALL RULES ----------------
+                print(f"[-] FULL cleanup for {attacker_ip}")
+
+                def delete_matching_rules(table, chain, match_tokens):
+                    while True:
+                        result = subprocess.run(
+                            [IPTABLES, "-t", table, "-L", chain, "-n", "--line-numbers"],
+                            capture_output=True,
+                            text=True
+                        )
+
+                        lines = result.stdout.splitlines()
+                        deleted = False
+
+                        for line in reversed(lines):
+                            if all(token in line for token in match_tokens):
+                                rule_num = line.split()[0]
+                                subprocess.run(
+                                    [IPTABLES, "-t", table, "-D", chain, rule_num],
+                                    check=True
+                                )
+                                deleted = True
+                                break
+
+                        if not deleted:
                             break
 
-                    if not deleted:
-                        break
+                delete_matching_rules("nat", "PREROUTING", [attacker_ip, honeypot_ip])
+                delete_matching_rules("filter", "FORWARD", [attacker_ip, honeypot_ip])
+                delete_matching_rules("filter", "FORWARD", [honeypot_ip, attacker_ip])
 
-            # Delete ALL DNAT rules
-            delete_matching_rules(
-                "nat",
-                "PREROUTING",
-                [attacker_ip, honeypot_ip]
-            )
+                print("[✓] ALL matching rules removed")
+                return True        #  ADDED
 
-            # Delete ALL FORWARD rules attacker → honeypot
-            delete_matching_rules(
-                "filter",
-                "FORWARD",
-                [attacker_ip, honeypot_ip]
-            )
-
-            # Delete ALL FORWARD rules honeypot → attacker
-            delete_matching_rules(
-                "filter",
-                "FORWARD",
-                [honeypot_ip, attacker_ip]
-            )
-
-            print("[✓] ALL matching rules removed")
+            except Exception as e:
+                log_error("Honeypot diversion failed", e)
+                print("[!] Honeypot diversion error:", e)
+                return False       #  ADDED
 
         # ===================== WINDOWS =====================
         elif os_name == "Windows":
-            action = "add" if divert else "delete"
-            subprocess.run(
-                [
-                    "netsh", "interface", "portproxy", action, "v4tov4",
-                    "listenaddress=0.0.0.0",
-                    f"listenport={port}",
-                    f"connectaddress={honeypot_ip}",
-                    f"connectport={port}"
-                ],
-                shell=True,
-                check=True
-            )
+            try:
+                action = "add" if divert else "delete"
+                subprocess.run(
+                    [
+                        "netsh", "interface", "portproxy", action, "v4tov4",
+                        "listenaddress=0.0.0.0",
+                        f"listenport={port}",
+                        f"connectaddress={honeypot_ip}",
+                        f"connectport={port}"
+                    ],
+                    shell=True,
+                    check=True
+                )
+                return True        #  ADDED
+            except Exception as e:
+                log_error("Windows honeypot diversion failed", e)
+                print("[!] Honeypot diversion error:", e)
+                return False       #  ADDED
 
         # ================== UNSUPPORTED ====================
         else:
             print("[!] Unsupported OS:", os_name)
+            return False           #  ADDED
 
+
+
+
+    
 
 from collections import defaultdict
 from datetime import datetime
@@ -2161,7 +2266,7 @@ if __name__ == "__main__" and RUN_ENGINE:
         database=SECUREGATE_DB_NAME
     )
         
-    cursor=connection.cursor(buffered=True)  # fetch kelela data read tevhach kela pahije as kahi nahi so he vapraych
+    cursor=connection.cursor(buffered=True) 
     ips=IPS(connection,cursor)
    
 
@@ -2171,10 +2276,22 @@ if __name__ == "__main__" and RUN_ENGINE:
     sys_info=SYS_INFO(ips,request,iprequest,network_protocol,connection,cursor)
 
     while True:
-        print("monitor request")
-        sys_info.monitor_requests()
-        print("process")
-        sys_info.process()
-        print("check suspiciousness")
-        sys_info.check_suspiciousness()
-      
+        load_dotenv(ENV_FILE, override=True)
+        SECUREGATE_NETWORK_MONITOR = os.getenv(
+            "SECUREGATE_NETWORK_MONITOR",
+            "False"
+        ).lower() == "true"
+
+        if SECUREGATE_NETWORK_MONITOR:
+            print("monitor request")
+            sys_info.monitor_requests()
+            print("process")
+            sys_info.process()
+            print("check suspiciousness")
+            sys_info.check_suspiciousness()
+            print("clean expired attacks")
+            sys_info.cleanup_expired_attacks()
+
+        else:
+            print("Network monitor stopped.")
+            time.sleep(2)

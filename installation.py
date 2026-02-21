@@ -83,6 +83,7 @@ ENV_FILE = os.path.join(BASE_DIR, "securegate.env")
 # ==================================================
 
 REQUIRED_ENV = {
+    "SECUREGATE_NETWORK_MONITOR":"False" ,
     "SECUREGATE_BASE_DIR": BASE_DIR.replace("\\", "/"),
     "SECUREGATE_DB_HOST": "localhost",
     "SECUREGATE_DB_PORT": "3306",
@@ -270,7 +271,8 @@ LIBRARIES = {
     "bcrypt": "bcrypt",
     "psutil": "psutil",
     "PIL": "Pillow",
-    "dotenv": "python-dotenv"
+    "dotenv": "python-dotenv",
+    "reportlab":"reportlab"
 }
 
 import os
@@ -419,24 +421,28 @@ def ensure_mysql_ready_or_exit():
 # ==================================================
 # SERVICES
 # ==================================================
-
 def create_linux_service(name, script):
     service_path = f"/etc/systemd/system/{name}.service"
+
     if os.path.exists(service_path):
         print(f"✔ {name} service exists")
         return
 
     python = sys.executable
+    script = os.path.abspath(script)
+    workdir = os.path.dirname(script)
+
     content = f"""[Unit]
 Description=SecureGate {name}
 After=network.target mysql.service
 
 [Service]
+Type=simple
 ExecStart={python} {script}
+WorkingDirectory={workdir}
+User=root
 Restart=always
 RestartSec=5
-WorkingDirectory={BASE_DIR}
-User=root
 
 [Install]
 WantedBy=multi-user.target
@@ -445,14 +451,12 @@ WantedBy=multi-user.target
     with open(service_path, "w") as f:
         f.write(content)
 
-    subprocess.call(["systemctl", "daemon-reload"])
-    subprocess.call(["systemctl", "enable", name])
-    subprocess.call(["systemctl", "start", name])
+    subprocess.run(["systemctl", "daemon-reexec"], check=True)
+    subprocess.run(["systemctl", "daemon-reload"], check=True)
+    subprocess.run(["systemctl", "enable", name], check=True)
+    subprocess.run(["systemctl", "restart", name], check=True)
 
-    print(f"✔ Created service: {name}")
-    
-    
-
+    print(f"✔ Created & started service: {name}")
 
 
 import subprocess
