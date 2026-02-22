@@ -872,8 +872,17 @@ def handle_network_setting(mode, field, widget=None):
 
     input_values = [ip.strip() for ip in raw_value.split(",") if ip.strip()]
 
-    if not input_values:
-        messagebox.showerror("Invalid Input", "IP list cannot be empty.")
+    if not raw_value:
+        # Allow empty configuration (user intentionally disables feature)
+        cursor.execute(f"UPDATE settings SET {field} = NULL")
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        messagebox.showinfo(
+            "Feature Disabled",
+            f"{field.replace('_',' ').title()} has been cleared."
+        )
         return
 
     validated_entries = []
@@ -883,7 +892,13 @@ def handle_network_setting(mode, field, widget=None):
         try:
             # Allow IP or CIDR
             network = ipaddress.ip_network(value, strict=False)
-            validated_entries.append(str(network))
+            entry_str = str(network)
+
+            # Remove /32 automatically
+            if entry_str.endswith("/32"):
+                entry_str = entry_str[:-3]
+
+            validated_entries.append(entry_str)
         except ValueError:
             invalid_entries.append(value)
 
@@ -1514,27 +1529,34 @@ def settingshow(setnum):
                 "Remote Upload Directory (On Attack)",
                 cmd=lambda: update_setting("remote_upload_directory")
             )
-            
-            
+                        # ---------- DECRYPT SENSITIVE FILE BUTTON ----------
+            tk.Button(
+                security_card,
+                text="🔓 Decrypt Protected File",
+                bg="#8e44ad",
+                fg="white",
+                font=("Segoe UI", 9, "bold"),
+                relief="flat",
+                cursor="hand2",
+                padx=14,
+                pady=6,
+                activebackground="#732d91",
+                command=lambda: update_setting("decrypt_file")
+            ).grid(row=3, column=0, columnspan=3, sticky="w", padx=22, pady=(6, 10))
             whitelist = add_setting_row(
                 security_card,
-                3,
+                4,
                 "Permitted IP List",
                 cmd=lambda: handle_network_setting("update", "whitelisted_ips", whitelist)
             )
 
             blacklist = add_setting_row(
                 security_card,
-                4,
+                5,
                 "Restricted IP List",
                 cmd=lambda: handle_network_setting("update", "blacklisted_ips", blacklist)
             )
-            blacklist = add_setting_row(
-    security_card,
-    4,
-    "Restricted IP List",
-    cmd=lambda: handle_network_setting("update", "blacklisted_ips", blacklist)
-)
+            
 
             # ================== LOAD & VERIFY DATA ==================
 
@@ -2079,18 +2101,24 @@ def update_setting(val):
     # ================= SENSITIVE FOLDER =================
     elif val == "sensitive folder":
         path = folder_path.get().strip()
-        if not PATH_REGEX.match(path):
-            messagebox.showerror("Invalid Path", "Invalid folder path format.")
+
+        if path == "":
+            cursor.execute("UPDATE settings SET sensitive_folders = NULL")
+            connection.commit()
+            messagebox.showinfo("Feature Disabled", "Protected directory cleared.")
             return
 
-        if path == get_current_setting("sensitive_folders"):
-            messagebox.showinfo("No Change", "This directory is already protected.")
+        if not os.path.isdir(path):
+            messagebox.showerror(
+                "Invalid Directory",
+                "The specified directory does not exist."
+            )
             return
 
         cursor.execute("UPDATE settings SET sensitive_folders = %s", (path,))
         connection.commit()
         messagebox.showinfo("Success", "Protected directory updated.")
-
+    
     # ================= EMAIL NOTIFICATION (Toggle) =================
     elif val == "email_notifications":
         new_state = 1 if email_notify_var.get() else 0
@@ -2108,16 +2136,18 @@ def update_setting(val):
     elif val == "decrypt_file":
         success = decrypt_sensitive_file()
 
-    if success:
-        messagebox.showinfo(
-            "Decryption Successful",
-            "Encrypted file has been successfully decrypted."
-        )
-    else:
-        messagebox.showwarning(
-            "Decryption Failed",
-            "No encrypted file found or file already decrypted."
-        )
+        if success:
+            messagebox.showinfo(
+                "Decryption Successful",
+                "Encrypted file has been successfully decrypted."
+            )
+        else:
+            messagebox.showwarning(
+                "Decryption Failed",
+                "No encrypted file found or file already decrypted."
+            )
+        
+
 def toggle_network_monitor():
     global SECUREGATE_NETWORK_MONITOR, network_monitor_btn
 
