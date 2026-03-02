@@ -662,7 +662,7 @@ class SYS_INFO:
                     log_error("Engine crashed during startup", e)
                     print("[WHITELIST REFRESH ERROR]:", e)
 
-
+            
 
 
 
@@ -680,6 +680,8 @@ class SYS_INFO:
                         if src_ip in WHITELIST_CACHE:
                             continue
                         #ignoring whitelist ips
+                        
+
                         dst_ip = str(curr_request.get("Dst_IP"))
 
                         src_port = curr_request.get("Src_Port")
@@ -899,14 +901,46 @@ class SYS_INFO:
             connection.commit()
 
     def check_suspiciousness(self):
-        global insertion_time, timer, ipreqlimit
+        global insertion_time
 
-        #  ALWAYS initialize (prevents UnboundLocalError)
         reqpertime_dict = {}
 
         try:
-            request.is_request_suspicious()
+            # =====================================================
+            # 🔥 PERMANENT BLACKLIST ENFORCEMENT
+            # =====================================================
+            blacklist = self.ips.blacklist_ip("all") or []
+            blacklist = set(blacklist)
 
+            for ip in blacklist:
+
+                # Ensure row exists
+                self.cursor.execute(
+                    "SELECT is_blocked FROM ip WHERE ip_address=%s",
+                    (ip,)
+                )
+                row = self.cursor.fetchone()
+
+                if not row:
+                    self.cursor.execute("""
+                        INSERT INTO ip (ip_address, request_time, last_seen, is_blocked)
+                        VALUES (%s, NOW(), NOW(), 0)
+                    """, (ip,))
+                    self.connection.commit()
+                    is_blocked = 0
+                else:
+                    is_blocked = row[0]
+
+                # If not already blocked → block permanently
+                if is_blocked == 0:
+                    print(f"[BLACKLIST ENFORCE] Blocking {ip}")
+                    self.ips.block_ip(ip, 99999)  # practically permanent
+
+            # =====================================================
+            # Continue normal suspicious detection
+            # =====================================================
+
+            request.is_request_suspicious()
             cursor.execute("SELECT max_requests_per_minute FROM settings")
             result = cursor.fetchone()
 
@@ -982,14 +1016,18 @@ class SYS_INFO:
             self.cursor.execute("""
                 SELECT ip_address, block_time
                 FROM ip
-                WHERE is_blocked = 1 AND block_time <= %s
+                WHERE is_blocked = 1
+                AND block_time IS NOT NULL
+                AND block_time <= %s
             """, (datetime.now(),))
 
             rows = self.cursor.fetchall()
-            for ip in rows:
-                print(ip[0])
-                self.ips.unblock_ip(ip[0])
 
+            blacklist = set(self.ips.blacklist_ip("all") or [])
+
+            for ip, block_time in rows:
+                if ip not in blacklist:
+                    self.ips.unblock_ip(ip)
         except Exception as e:
             log_error("Engine crashed during startup", e)
             print(e)
@@ -1055,21 +1093,29 @@ class SYS_INFO:
                 )
 
         # ================= MASS SCAN =================
-        all_ports = set()
-        for ports in ip_ports.values():
-            all_ports.update(ports)
+        for ip, ports in ip_ports.items():
 
-        if len(all_ports) >= mass_scan_ports:
-            for ip in ip_ports.keys():
-                fingerprint = f"{ip}:MASS_SCAN"
-                SYS_INFO.upsert_attack(
-                    cursor,
-                    attack_type="MASS_SCAN",
-                    src_ip=ip,
-                    fingerprint=fingerprint,
-                    severity="HIGH"
-                )
+            if len(ports) >= mass_scan_ports:
 
+                stats = tcp_stats.get(ip)
+                if not stats:
+                    continue
+
+                total = sum(stats.values())
+                if total == 0:
+                    continue
+
+                syn_ratio = stats["syn"] / total
+
+                if syn_ratio > 0.7:
+                    fingerprint = f"{ip}:MASS_SCAN"
+                    SYS_INFO.upsert_attack(
+                        cursor,
+                        attack_type="MASS_SCAN",
+                        src_ip=ip,
+                        fingerprint=fingerprint,
+                        severity="HIGH"
+                    )
         # ================= SYN FLOOD =================
         tcp_stats = defaultdict(lambda: {
             "syn": 0,
@@ -1537,48 +1583,76 @@ class IPS:
             log_error("Engine crashed during startup", e)
             print("[WHITELIST ERROR]:", e)
 
-    def blacklist_ip(action, ip=None):
-        cursor = None
-        try:
-            cursor = connection.cursor()
+    def blacklist_ip(self, action, ip=None, manual_block_minutes=60):
+        """
+        Blacklist IP AND immediately block it.
+        """
 
+        try:
+            cursor = self.connection.cursor()
+
+            # 1️⃣ Fetch existing blacklist
+            cursor = self.connection.cursor()
+
+            # Fetch existing blacklist
             cursor.execute("SELECT blacklisted_ips FROM settings LIMIT 1")
             result = cursor.fetchone()
 
-            raw = result[0] if result and result[0] else "[]"
-            if isinstance(raw, bytes):
-                raw = raw.decode()
-
-            try:
-                ip_list = json.loads(raw)
-            except Exception as e:
+            if result and result[0]:
+                ip_list = [x.strip() for x in result[0].split(",") if x.strip()]
+            else:
                 ip_list = []
 
+            # ================= ADD =================
             if action == "add" and ip:
+
                 if ip not in ip_list:
                     ip_list.append(ip)
 
+                # Save back to settings
+                cursor.execute(
+                    "UPDATE settings SET blacklisted_ips=%s",
+                    (json.dumps(ip_list),)
+                )
+                self.connection.commit()
+
+                # 2️⃣ Ensure IP exists in ip table
+                cursor.execute("""
+                    INSERT INTO ip (ip_address, request_time, last_seen)
+                    VALUES (%s, NOW(), NOW())
+                    ON DUPLICATE KEY UPDATE last_seen=NOW()
+                """, (ip,))
+                self.connection.commit()
+
+                # 3️⃣ Immediately block it
+                self.block_ip(ip, manual_block_minutes)
+
+                print(f"[MANUAL BLACKLIST] {ip} added and blocked.")
+
+            # ================= REMOVE =================
             elif action == "remove" and ip:
+
                 if ip in ip_list:
                     ip_list.remove(ip)
 
+                cursor.execute(
+                    "UPDATE settings SET blacklisted_ips=%s",
+                    (json.dumps(ip_list),)
+                )
+                self.connection.commit()
+
+                # Also unblock it
+                self.unblock_ip(ip)
+
+                print(f"[MANUAL BLACKLIST] {ip} removed and unblocked.")
+
+            # ================= SHOW =================
             elif action == "all":
-                return ip_list  #  ALWAYS list
-
-            final_json = json.dumps(ip_list)
-            cursor.execute(
-                "UPDATE settings SET blacklisted_ips=%s",
-                (final_json,)
-            )
-            connection.commit()
-
-            return ip_list  #  return updated list
+                return ip_list
 
         except Exception as e:
-            log_error("Engine crashed during startup", e)
+            log_error("Blacklist system failed", e)
             print("[BLACKLIST ERROR]:", e)
-            return []        #  NEVER None
-
     
     def normalize_ip(ip_str):
         try:

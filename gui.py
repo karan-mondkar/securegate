@@ -16,7 +16,7 @@ import ipaddress
 from reportlab.lib.styles import getSampleStyleSheet
 from datetime import datetime
 from tkinter import filedialog
-
+import socket
 
 
 
@@ -1023,7 +1023,6 @@ def handle_network_setting(mode, field, widget=None):
         msg += "\n\n(No changes detected)"
 
     messagebox.showinfo("Success", msg)
-
 def reload_settings_ui():
     try:
         data = fetch_settings_data()
@@ -1043,44 +1042,48 @@ def reload_settings_ui():
             blacklist_val
         ) = data
 
-        if new_email:
+        # ✅ SAFE CHECKS USING globals()
+
+        if "new_email" in globals() and new_email:
             new_email.delete(0, "end")
             new_email.insert(0, email_val or "")
 
-        if email_api_token:
+        if "email_api_token" in globals() and email_api_token:
             email_api_token.delete(0, "end")
             email_api_token.insert(0, email_token_val or "")
 
-        if suspicious_activity_alert_mail:
+        if "suspicious_activity_alert_mail" in globals() and suspicious_activity_alert_mail:
             suspicious_activity_alert_mail.delete(0, "end")
             suspicious_activity_alert_mail.insert(0, suspicious_email_val or "")
 
-        if honeypot_ips:
+        if "honeypot_ips" in globals() and honeypot_ips:
             honeypot_ips.delete(0, "end")
             honeypot_ips.insert(0, honeypot_ips_val or "")
 
-        if folder_path:
+        if "folder_path" in globals() and folder_path:
             folder_path.delete(0, "end")
             folder_path.insert(0, sensitive_folders_val or "")
 
-        if remote_upload_path:
+        if "remote_upload_path" in globals() and remote_upload_path:
             remote_upload_path.delete(0, "end")
             remote_upload_path.insert(0, remote_upload_val or "")
 
-        if whitelist:
+        if "whitelist" in globals() and whitelist:
             whitelist.delete(0, "end")
             whitelist.insert(0, whitelist_val or "")
 
-        if blacklist:
+        if "blacklist" in globals() and blacklist:
             blacklist.delete(0, "end")
             blacklist.insert(0, blacklist_val or "")
 
-        if email_notify_var is not None:
+        if "email_notify_var" in globals() and email_notify_var is not None:
             try:
                 email_notify_var.set(bool(int(email_alerts_enabled)))
-            except Exception:
+            except:
                 email_notify_var.set(False)
 
+    except Exception as e:
+        print("Settings reload error:", e)
     except Exception as e:
         print("Settings reload error:", e)
 
@@ -2105,20 +2108,26 @@ def update_setting(val):
         if path == "":
             cursor.execute("UPDATE settings SET sensitive_folders = NULL")
             connection.commit()
-            messagebox.showinfo("Feature Disabled", "Protected directory cleared.")
+            messagebox.showinfo("Feature Disabled", "Protected path cleared.")
             return
 
-        if not os.path.isdir(path):
+        if not os.path.exists(path):
             messagebox.showerror(
-                "Invalid Directory",
-                "The specified directory does not exist."
+                "Invalid Path",
+                "The specified file or directory does not exist."
+            )
+            return
+
+        if not os.access(path, os.R_OK):
+            messagebox.showerror(
+                "Permission Error",
+                "Application does not have permission to access this path."
             )
             return
 
         cursor.execute("UPDATE settings SET sensitive_folders = %s", (path,))
         connection.commit()
-        messagebox.showinfo("Success", "Protected directory updated.")
-    
+        messagebox.showinfo("Success", "Protected path updated.")
     # ================= EMAIL NOTIFICATION (Toggle) =================
     elif val == "email_notifications":
         new_state = 1 if email_notify_var.get() else 0
