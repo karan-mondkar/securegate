@@ -91,11 +91,12 @@ validate_user=False
 SECUREGATE_NETWORK_MONITOR = None
 current_page = 0
 rows_per_page =  SECUREGATE_GUI_ROWS_PER_PAGE
-all_rows = []
-columns = []
+
 import re
 
-
+all_rows = []
+columns = []
+original_rows = []   # ✅ ADD THIS LINE
 # The Global App State
 APP_STATE = {
     "current_view": "dashboard", # Tracks which page the user is on
@@ -103,6 +104,12 @@ APP_STATE = {
     "rows_per_page": SECUREGATE_GUI_ROWS_PER_PAGE,
     "search_query": "",          # Tracks if user filtered data
     "last_data_type": "logs"     # Tracks if we were looking at blocked or unblocked
+,
+"filter_column": None,
+    "filter_value": None
+,
+   "sort_column": None,
+    "sort_reverse": False
 }
 
 
@@ -138,32 +145,23 @@ def clear_all_jobs():
     refresh_jobs.clear()
 def db():
     try:
-        # 🔁 ALWAYS reload env (critical)
         load_dotenv(ENV_FILE, override=True)
 
-        host = os.getenv("SECUREGATE_DB_HOST")
-        user = os.getenv("SECUREGATE_DB_USER")
-        password = os.getenv("SECUREGATE_DB_PASS")
-        database = os.getenv("SECUREGATE_DB_NAME")
-        port = int(os.getenv("SECUREGATE_DB_PORT", "3306"))
-
-        if not all([host, user, database]):
-            raise ValueError("Database environment variables missing")
-
         conn = mysql.connector.connect(
-            host=host,
-            user=user,
-            password=password,
-            database=database,
-            port=port,
+            host=os.getenv("SECUREGATE_DB_HOST"),
+            user=os.getenv("SECUREGATE_DB_USER"),
+            password=os.getenv("SECUREGATE_DB_PASS"),
+            database=os.getenv("SECUREGATE_DB_NAME"),
+            port=int(os.getenv("SECUREGATE_DB_PORT", "3306")),
             autocommit=True
         )
-        return conn, conn.cursor()
+
+        cursor = conn.cursor(buffered=True)   
+        return conn, cursor
 
     except Exception as e:
         print("SQL Error:", e)
         return None, None
-    
 
 import mysql.connector
 
@@ -174,6 +172,20 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from datetime import datetime
 from tkinter import filedialog
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 def export_alerts_from_db():
    
@@ -307,6 +319,136 @@ def export_alerts_from_db():
     )
 import bcrypt
 from tkinter import messagebox
+
+
+
+
+def fetch_country_request_stats():
+    try:
+        conn = connect_db()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+           SELECT 
+    country,
+    SUM(request_count) AS total_requests
+FROM ip
+WHERE country IS NOT NULL
+GROUP BY country
+ORDER BY total_requests DESC
+LIMIT 15;
+        """)
+
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        return rows
+
+    except Exception as e:
+        print("Country stats error:", e)
+        return []
+
+def show_country_heat_chart(parent):
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+    data = fetch_country_request_stats()
+
+    if not data:
+        tk.Label(parent, text="No Country Data", bg="#f4f7f6").pack()
+        return
+
+    countries = []
+    counts = []
+
+    for country, total in data:
+        countries.append(country if country else "Unknown")
+        counts.append(float(total))
+
+    if not counts:
+        return
+
+    # 🔥 Limit to Top 10 max
+    countries = countries[:10]
+    counts = counts[:10]
+
+    total_all = sum(counts)
+    max_val = max(counts)
+
+    # 🔥 Dynamic height (very important)
+    dynamic_height = 0.6 * len(countries)
+    fig_height = max(4, dynamic_height)
+
+    fig, ax = plt.subplots(figsize=(9, fig_height), dpi=110)
+
+    y_positions = np.arange(len(countries))
+
+    # Gradient coloring
+    norm = plt.Normalize(min(counts), max_val)
+    colors = plt.cm.Reds(norm(counts))
+
+    bars = ax.barh(
+        y_positions,
+        counts,
+        height=0.55,
+        color=colors,
+        edgecolor="black",
+        linewidth=0.5
+    )
+
+    ax.set_yticks(y_positions)
+    ax.set_yticklabels(countries, fontsize=9)
+
+    # 🔥 Clean value labels (no overlap)
+    for i, bar in enumerate(bars):
+        width = bar.get_width()
+        percent = (width / total_all) * 100
+
+        ax.text(
+            width + (max_val * 0.01),
+            bar.get_y() + bar.get_height() / 2,
+            f"{int(width)} ({percent:.1f}%)",
+            va="center",
+            fontsize=8
+        )
+
+    ax.set_xlim(0, max_val * 1.15)
+
+    ax.set_xlabel("Total Requests", fontsize=10, fontweight="bold")
+    ax.set_title(
+        "Top Attacking Countries – Threat Intelligence Overview",
+        fontsize=12,
+        fontweight="bold",
+        pad=15
+    )
+
+    ax.invert_yaxis()
+
+    # Clean style
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_visible(False)
+    ax.grid(axis="x", linestyle="--", alpha=0.25)
+
+    fig.tight_layout()
+
+    # Embed in Tkinter
+    chart_card = tk.Frame(
+        parent,
+        bg="white",
+        highlightbackground="#dcdde1",
+        highlightthickness=1
+    )
+    chart_card.pack(fill="x", padx=30, pady=10)
+
+    canvas = FigureCanvasTkAgg(fig, master=chart_card)
+    canvas.draw()
+    canvas.get_tk_widget().pack(fill="both", expand=True)
+
+
+
 
 def validate(username, password):
     global validate_user
@@ -1486,7 +1628,7 @@ def settingshow(setnum):
 
             rules_listbox = tk.Listbox(
             rules_container,
-            height=5,
+           
             font=("Segoe UI", 9),
             selectmode="single",
             activestyle="none"
@@ -2302,11 +2444,10 @@ def toggle_network_monitor():
             activebackground="#c0392b"
         )
 
-
 def dashboardshow():
-    global APP_STATE
+    global APP_STATE, network_monitor_btn, refresh_jobs
 
-    # 🔴 HARD RESET ALL STATE
+    # 🔴 Reset state and clear background jobs
     clear_all_jobs()
 
     APP_STATE["current_view"] = "dashboard"
@@ -2314,244 +2455,129 @@ def dashboardshow():
     APP_STATE["last_page_name"] = None
     sidebar.grid(row=0, column=0, sticky="ns")
 
-
-    global connection, cursor
-
-    # Clear existing widgets
+    # Clear everything from the main content area
     for widget in content_frame.winfo_children():
         widget.destroy()
 
-    # --- UI THEME COLORS ---
+    # --- THEME COLORS ---
     BG_MAIN = "#f4f7f6"
-    ACCENT_COLOR = "#2c3e50"
-    ALERT_RED = "#e74c3c"
     CARD_BG = "#ffffff"
-    ACCENT_BLUE = "#3498db"
+    ALERT_RED = "#e74c3c"
+    ACCENT_COLOR = "#2c3e50"
+
+    # =================================================================
+    # 1. FIXED SCROLLBAR ARCHITECTURE
+    # =================================================================
     
-    content_frame.configure(bg=BG_MAIN)
+    # Outer container to hold canvas + scrollbar
+    container = tk.Frame(content_frame, bg=BG_MAIN)
+    container.pack(fill="both", expand=True)
 
-    # ---------------- 1. HEADER SECTION ----------------
+    canvas = tk.Canvas(container, bg=BG_MAIN, highlightthickness=0)
+    scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+    
+    # This is the "inner" frame that will expand to full width
+    scrollable_dashboard = tk.Frame(canvas, bg=BG_MAIN)
 
-    header_frame = tk.Frame(content_frame, bg=BG_MAIN)
-    header_frame.pack(fill="x", padx=30, pady=(20, 10))
-    # ================= NETWORK MONITOR TOGGLE =================
-    # ================= NETWORK MONITOR TOGGLE =================
-    global network_monitor_btn
-
-    if SECUREGATE_NETWORK_MONITOR:
-        btn_text = "🟢 Network Monitor: ON"
-        btn_color = "#2ecc71"
-        active_color = "#27ae60"
-    else:
-        btn_text = "🔴 Network Monitor: OFF"
-        btn_color = "#e74c3c"
-        active_color = "#c0392b"
-
-    network_monitor_btn = tk.Button(
-        header_frame,
-        text=btn_text,
-        font=("Segoe UI", 10, "bold"),
-        fg="white",
-        bg=btn_color,
-        activebackground=active_color,
-        relief="flat",
-        cursor="hand2",
-        padx=15,
-        pady=6,
-        command=toggle_network_monitor
+    # Update scroll region whenever widgets are added
+    scrollable_dashboard.bind(
+        "<Configure>",
+        lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
     )
 
+    # Place frame inside canvas
+    window_id = canvas.create_window((0, 0), window=scrollable_dashboard, anchor="nw")
+
+    # 🔥 CRITICAL FIX: This forces the dashboard to stay full-width
+    def on_canvas_configure(event):
+        canvas.itemconfig(window_id, width=event.width)
+
+    canvas.bind("<Configure>", on_canvas_configure)
+    canvas.configure(yscrollcommand=scrollbar.set)
+
+    # Pack scrollbar and canvas correctly
+    scrollbar.pack(side="right", fill="y")
+    canvas.pack(side="left", fill="both", expand=True)
+
+    # =================================================================
+    # 2. DASHBOARD CONTENT (Using 'scrollable_dashboard' as parent)
+    # =================================================================
+
+    # ---------------- HEADER ----------------
+    header_frame = tk.Frame(scrollable_dashboard, bg=BG_MAIN)
+    header_frame.pack(fill="x", padx=30, pady=(20, 10))
+
+    btn_text = "🟢 Network Monitor: ON" if SECUREGATE_NETWORK_MONITOR else "🔴 Network Monitor: OFF"
+    btn_color = "#2ecc71" if SECUREGATE_NETWORK_MONITOR else "#e74c3c"
+    active_color = "#27ae60" if SECUREGATE_NETWORK_MONITOR else "#c0392b"
+
+    network_monitor_btn = tk.Button(
+        header_frame, text=btn_text, font=("Segoe UI", 10, "bold"),
+        fg="white", bg=btn_color, activebackground=active_color,
+        relief="flat", cursor="hand2", padx=15, pady=6,
+        command=toggle_network_monitor
+    )
     network_monitor_btn.pack(side="right", padx=10)
 
-
-    # ---------------- 2. CRITICAL ALERTS (TOP PRIORITY) ----------------
-    # High-visibility container for active threats
-    # ================= ALERTS CONTAINER =================
+    # ---------------- ALERTS SECTION ----------------
     alerts_container = tk.LabelFrame(
-        content_frame,
-        text=" 🚨 ACTIVE SECURITY THREATS ",
-        font=("Segoe UI", 11, "bold"),
-        fg=ALERT_RED,
-        bg=CARD_BG,
-        padx=15,
-        pady=15,
-        relief="flat",
-        highlightbackground="#dcdde1",
-        highlightthickness=1
+        scrollable_dashboard, text=" 🚨 ACTIVE SECURITY THREATS ",
+        font=("Segoe UI", 11, "bold"), fg=ALERT_RED, bg=CARD_BG,
+        padx=15, pady=15, relief="flat", highlightbackground="#dcdde1", highlightthickness=1
     )
     alerts_container.pack(fill="x", padx=30, pady=10)
 
-    # ================= EXPORT BUTTON =================
-    export_btn = tk.Button(
-        alerts_container,
-        text="⬇ Export Alerts to PDF",
-        bg="#e74c3c",
-        fg="white",
-        font=("Segoe UI", 9, "bold"),
-        relief="flat",
-        cursor="hand2",
-        padx=12,
-        pady=4,
-        command=lambda: export_alerts_from_db()
-    )
-    export_btn.pack(anchor="e", pady=(0, 8))
+    # Alert Treeview Logic (Standardized for Scrollable Frame)
+    table_frame = tk.Frame(alerts_container, bg=CARD_BG)
+    table_frame.pack(fill="x", expand=True)
 
-    # ================= TREEVIEW STYLE =================
-    style = ttk.Style()
-    style.theme_use("clam")
-    style.configure(
-        "Alert.Treeview",
-        rowheight=30,
-        font=("Segoe UI", 9),
-        background="white",
-        fieldbackground="white"
-    )
-    style.configure(
-        "Alert.Treeview.Heading",
-        font=("Segoe UI", 10, "bold"),
-        background="#fdf2f2"
-    )
-
-    # ================= TREEVIEW COLUMNS =================
-    columns_alert = (
-        "attack_type",
-        "src_ip",
-        "first_detected",
-        "last_detected",
-        "hit_count",
-        "severity",
-        "actions_taken",
-        "action_expires_at",
-        "is_active"
-    )
-
-    alert_tree = ttk.Treeview(
-        alerts_container,
-        columns=columns_alert,
-        show="headings",
-        height=5,
-        style="Alert.Treeview"
-    )
-
-    # ================= HEADINGS =================
-    alert_tree.heading("attack_type", text="Attack Type")
-    alert_tree.heading("src_ip", text="Source IP")
-    alert_tree.heading("first_detected", text="First Detected")
-    alert_tree.heading("last_detected", text="Last Detected")
-    alert_tree.heading("hit_count", text="Hits")
-    alert_tree.heading("severity", text="Severity")
-    alert_tree.heading("actions_taken", text="Actions Taken")
-    alert_tree.heading("action_expires_at", text="Action Expires")
-    alert_tree.heading("is_active", text="Active")
-
-    # ================= COLUMN FORMATTING =================
-    alert_tree.column("attack_type", width=140)
-    alert_tree.column("src_ip", width=130)
-    alert_tree.column("first_detected", width=150)
-    alert_tree.column("last_detected", width=150)
-    alert_tree.column("hit_count", width=70, anchor="center")
-    alert_tree.column("severity", width=90, anchor="center")
-    alert_tree.column("actions_taken", width=220)
-    alert_tree.column("action_expires_at", width=150)
-    alert_tree.column("is_active", width=70, anchor="center")
-
-    # ================= SEVERITY TAGS =================
-    alert_tree.tag_configure("HIGH", background="#ffcccc", foreground="#900")
-    alert_tree.tag_configure("MEDIUM", background="#ffe0b3", foreground="#7a4a00")
-    alert_tree.tag_configure("LOW", background="#d4edda", foreground="#155724")
-
-    # ================= FETCH & INSERT DATA =================
-    try:
-        database = db()
-        conn, cur = database[0], database[1]
-
-        cur.execute("""
-            SELECT
-                attack_type,
-                src_ip,
-                first_detected,
-                last_detected,
-                hit_count,
-                severity,
-                actions_taken,
-                action_expires_at,
-                is_active
-            FROM attack_state
-            WHERE is_active = 1
-            ORDER BY FIELD(severity, 'HIGH', 'MEDIUM', 'LOW'),
-                    last_detected DESC
-        """)
-
-        for row in cur.fetchall():
-            # Parse actions_taken JSON for clean display
-            actions = row[6]
-            try:
-                actions = ", ".join(json.loads(actions))
-            except Exception:
-                pass
-
-            display_row = (
-                row[0],  # attack_type
-                row[1],  # src_ip
-                row[2],  # first_detected
-                row[3],  # last_detected
-                row[4],  # hit_count
-                row[5],  # severity
-                actions, # actions_taken
-                row[7],  # action_expires_at
-                "YES" if row[8] else "NO"
-            )
-
-            alert_tree.insert(
-                "",
-                "end",
-                values=display_row,
-                tags=(row[5],)   # Severity tag
-            )
-
-    except Exception as e:
-        tk.Label(
-            alerts_container,
-            text=f"Update Error: {e}",
-            bg=CARD_BG,
-            fg="red"
-        ).pack()
+    columns_alert = ("attack_type", "src_ip", "first_detected", "last_detected", "hit_count", "severity")
     
-    alert_tree.pack(fill="x", expand=True)
-    # ---------------- 3. ANALYTICS SECTION (VISUALS & LOGS) ----------------
-    # A subtle title to separate the data
-    tk.Label(
-        content_frame, 
-        text="Geographic Traffic Analysis", 
-        font=("Segoe UI", 14, "bold"),
-        fg=ACCENT_COLOR,
-        bg=BG_MAIN
-    ).pack(anchor="w", padx=30, pady=(20, 5))
+    alert_tree = ttk.Treeview(table_frame, columns=columns_alert, show="headings", height=5, style="Alert.Treeview")
+    alert_tree.pack(fill="x", expand=True, side="left")
 
-    # We call the modified chart function and pass the content_frame
-    show_bar_chart_by_country_integrated()
+    for col in columns_alert:
+        alert_tree.heading(col, text=col.replace("_", " ").title())
+        alert_tree.column(col, anchor="center", width=100)
 
-    # ---------------- LOGIC & THREADS ----------------
+    # Fetch and Insert Rows
+    try:
+        conn, cur = db()
+        cur.execute("SELECT attack_type, src_ip, first_detected, last_detected, hit_count, severity FROM attack_state WHERE is_active = 1")
+        rows = cur.fetchall()
+        if not rows:
+            alert_tree.destroy()
+            tk.Label(table_frame, text="🛡 No Active Security Threats Detected", font=("Segoe UI", 11, "bold"), bg=CARD_BG, fg="#2ecc71", pady=15).pack()
+        else:
+            for r in rows:
+                alert_tree.insert("", "end", values=r)
+        cur.close()
+        conn.close()
+    except:
+        pass
+
+    # ---------------- CHARTS SECTION ----------------
+    tk.Label(scrollable_dashboard, text="Geographic Traffic Analysis", 
+             font=("Segoe UI", 14, "bold"), fg=ACCENT_COLOR, bg=BG_MAIN).pack(anchor="w", padx=30, pady=(20, 5))
+
+    # Pass the scrollable frame to ensure charts don't float outside
+    show_country_heat_chart(scrollable_dashboard)
+    show_bar_chart_by_country_integrated(scrollable_dashboard)
+
+    # ---------------- REFRESH LOGIC ----------------
     thread = threading.Thread(target=update_null_countries)
     thread.daemon = True
     thread.start()
 
-    global refresh_jobs
-    job_id = root.after(SECUREGATE_GUI_REFRESH_INTERVAL * 1000, lambda: data_to_show("Dashboard"))
+    job_id = root.after(SECUREGATE_GUI_REFRESH_INTERVAL * 1000, dashboardshow)
     refresh_jobs.append(job_id)
 
-def show_bar_chart_by_country_integrated():
-    # Colors for Chart
-    BG_MAIN = "#f4f7f6"
-    CARD_BG = "#ffffff"
-    RED_CHART = "#e74c3c"
-    GREEN_CHART = "#2ecc71"
-    ACCENT_BLUE = "#3498db"
-
+def show_bar_chart_by_country_integrated(parent):
+    # 1. Fetch data from database
     blocked = fetch_ips("blocked") or []
     unblocked = fetch_ips("unblocked") or []
 
-    # Data Processing
+    # 2. Process data into counts
     blocked_counts = collections.defaultdict(int)
     for ip, country in blocked:
         name = str(country).strip() if country and str(country).strip() != "" else "Unknown"
@@ -2562,35 +2588,27 @@ def show_bar_chart_by_country_integrated():
         name = str(country).strip() if country and str(country).strip() != "" else "Unknown"
         unblocked_counts[name] += 1
 
+    # 🔥 FIX: Define all_countries here so the loop below can find it
     all_countries = sorted(list(set(blocked_counts.keys()) | set(unblocked_counts.keys())))
 
     if not all_countries:
-        tk.Label(content_frame, text="No Data Available", bg=BG_MAIN).pack(pady=20)
+        tk.Label(parent, text="No Data Available", bg="#f4f7f6").pack(pady=20)
         return
 
     # --- CHART CARD ---
-    chart_card = tk.Frame(content_frame, bg="white", highlightbackground="#dcdde1", highlightthickness=1)
+    chart_card = tk.Frame(parent, bg="white", highlightbackground="#dcdde1", highlightthickness=1)
     chart_card.pack(fill="x", padx=30, pady=10)
 
-    plt.style.use('ggplot')
     fig, ax = plt.subplots(figsize=(10, 4), dpi=100)
-    fig.patch.set_facecolor('white')
-    ax.set_facecolor('white')
-
     width = 0.35
     x = range(len(all_countries))
 
-    ax.bar(x, [blocked_counts.get(c, 0) for c in all_countries], width, 
-           label='Blocked', color=RED_CHART, edgecolor='white', linewidth=0.5)
-    ax.bar([i + width for i in x], [unblocked_counts.get(c, 0) for c in all_countries], width, 
-           label='Unblocked', color=GREEN_CHART, edgecolor='white', linewidth=0.5)
-
-    ax.set_ylabel('Total IPs', fontname='Segoe UI', fontweight='bold', alpha=0.6)
+    ax.bar(x, [blocked_counts.get(c, 0) for c in all_countries], width, label='Blocked', color="#e74c3c")
+    ax.bar([i + width for i in x], [unblocked_counts.get(c, 0) for c in all_countries], width, label='Unblocked', color="#2ecc71")
+    
     ax.set_xticks([i + width / 2 for i in x])
     ax.set_xticklabels(all_countries, rotation=25, ha='right', fontsize=8)
-    ax.legend(frameon=False)
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
+    ax.legend()
     fig.tight_layout()
 
     canvas = FigureCanvasTkAgg(fig, master=chart_card)
@@ -2598,34 +2616,20 @@ def show_bar_chart_by_country_integrated():
     canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
 
     # --- DATA TABLE CARD ---
-    table_frame = tk.Frame(content_frame, bg=BG_MAIN)
+    table_frame = tk.Frame(parent, bg="#f4f7f6")
     table_frame.pack(fill='both', expand=True, padx=30, pady=(10, 20))
 
-    # Table Style
-    style = ttk.Style()
-    style.configure("Table.Treeview", background=CARD_BG, rowheight=28, font=("Segoe UI", 9))
-    style.configure("Table.Treeview.Heading", background="#ecf0f1", font=("Segoe UI", 10, "bold"))
-
     columns = ('country', 'blocked', 'unblocked')
-    tree = ttk.Treeview(table_frame, columns=columns, show='headings', style="Table.Treeview")
+    tree = ttk.Treeview(table_frame, columns=columns, show='headings', height=10)
 
-    tree.heading('country', text='  COUNTRY')
-    tree.column('country', anchor='w', width=200)
-    tree.heading('blocked', text='  BLOCKED')
-    tree.column('blocked', anchor='center', width=100)
-    tree.heading('unblocked', text='  UNBLOCKED')
-    tree.column('unblocked', anchor='center', width=100)
+    for col in columns:
+        tree.heading(col, text=col.upper())
+        tree.column(col, anchor='center')
 
+    # This loop now works because all_countries is defined above
     for i, country in enumerate(all_countries):
-        tag = 'even' if i % 2 == 0 else 'odd'
-        tree.insert('', 'end', values=(f" {country}", blocked_counts.get(country, 0), unblocked_counts.get(country, 0)), tags=(tag,))
+        tree.insert('', 'end', values=(country, blocked_counts.get(country, 0), unblocked_counts.get(country, 0)))
 
-    tree.tag_configure('odd', background='#f9f9f9')
-    tree.tag_configure('even', background='#ffffff')
-
-    scrollbar = ttk.Scrollbar(table_frame, orient='vertical', command=tree.yview)
-    tree.configure(yscrollcommand=scrollbar.set)
-    scrollbar.pack(side='right', fill='y')
     tree.pack(side='left', fill='both', expand=True)
 
 def connect_db():
@@ -2672,34 +2676,79 @@ def blockdatashow():
 import threading
 
 def update_gui_with_data(fetched_rows, cols, page_name, reset_pagination=True):
-    global all_rows, columns, APP_STATE
-    
+    global all_rows, columns, APP_STATE, original_rows
+
     if fetched_rows == "dashboard":
         APP_STATE["current_view"] = "dashboard"
         dashboardshow()
         return
+
     elif fetched_rows == "settings":
         APP_STATE["current_view"] = "settings"
         settingshow(3)
         return
 
-    # Update Data
-    all_rows = fetched_rows if fetched_rows is not None else []
-    columns = cols
-    
-    # THE STATE FIX: Only reset to page 0 if it's a NEW click, not a refresh
+    # ---------------- FIRST: Assign Data ----------------
+    all_rows = fetched_rows if fetched_rows else []
+    columns = cols if cols else []
+    original_rows = list(all_rows)
+
+    # ---------------- THEN: Re-Apply Sorting ----------------
+    if APP_STATE.get("sort_column") and APP_STATE["sort_column"] in columns:
+
+        col_name = APP_STATE["sort_column"]
+        col_index = columns.index(col_name)
+
+        def sort_key(row):
+            value = row[col_index]
+
+            if value is None:
+                return ""
+
+            value_str = str(value).strip()
+
+            # IP sort
+            try:
+                ip_obj = ipaddress.ip_address(value_str)
+                return (ip_obj.version, int(ip_obj))
+            except:
+                pass
+
+            # Number sort
+            try:
+                return float(value_str)
+            except:
+                pass
+
+            # Datetime sort
+            try:
+                return datetime.strptime(value_str, "%Y-%m-%d %H:%M:%S")
+            except:
+                pass
+
+            return value_str.lower()
+
+        all_rows.sort(
+            key=sort_key,
+            reverse=APP_STATE.get("sort_reverse", False)
+        )
+
+    # ---------------- Pagination Control ----------------
     if reset_pagination:
         APP_STATE["current_page"] = 0
-    
+
     APP_STATE["current_view"] = "data_logs"
-    APP_STATE["last_page_name"] = page_name # Remember WHICH table we are on
-    
+    APP_STATE["last_page_name"] = page_name
+
     show_page_data()
-    
-    # Schedule next refresh
+
+    # ---------------- Auto Refresh ----------------
     if page_name != "Setting":
-        clear_all_jobs() # Prevent timer stacking
-        job_id = root.after(SECUREGATE_GUI_REFRESH_INTERVAL * 1000, lambda: data_to_show(page_name, False)) # False = Don't reset page
+        clear_all_jobs()
+        job_id = root.after(
+            SECUREGATE_GUI_REFRESH_INTERVAL * 1000,
+            lambda: data_to_show(page_name, False)
+        )
         refresh_jobs.append(job_id)
 
 def data_to_show(page_name, reset_pagination=True):
@@ -2915,59 +2964,171 @@ current_page = 0
 rows_per_page = SECUREGATE_GUI_ROWS_PER_PAGE
 
 def show_page_data(preserve_state=True):
-    """
-    Renders the data table with horizontal and vertical scrolling,
-    ensuring large datasets like Logs don't break the UI layout.
-    """
-    global all_rows, columns, current_page, rows_per_page
 
-    # --- UI THEME COLORS ---
+
+    global all_rows, columns, current_page, rows_per_page, original_rows
+
+    # ---------------- UI COLORS ----------------
     BG_MAIN = "#f4f7f6"
     CARD_BG = "#ffffff"
     ACCENT_BLUE = "#3498db"
     TEXT_COLOR = "#2c3e50"
 
-    # 1. State Preservation Logic
+
+    # ---------------- SAFE FILTER APPLICATION ----------------
+    filtered_rows = all_rows
+
+    filter_column = APP_STATE.get("filter_column")
+    filter_value = APP_STATE.get("filter_value")
+    
+        # ---------------- APPLY FILTER ----------------
+    if filter_column and filter_value and filter_column in columns:
+
+        col_index = columns.index(filter_column)
+
+        pattern = filter_value.strip().lower()
+
+        temp = []
+
+        for row in all_rows:
+            cell_value = str(row[col_index]).strip().lower()
+
+            # Contains search if % used
+            if "%" in pattern:
+                search = pattern.replace("%", "")
+                if search in cell_value:
+                    temp.append(row)
+            else:
+                # Default = starts with
+                if cell_value.startswith(pattern):
+                    temp.append(row)
+
+        filtered_rows = temp
+    
+    # ---------------- RESET FRAME FIRST ----------------
+    for widget in content_frame.winfo_children():
+        widget.destroy()
+
+    content_frame.configure(bg=BG_MAIN)
+
+    # ---------------- PRESERVE STATE ----------------
     if not preserve_state:
         current_page = 0
 
-    # Safety check for pagination bounds
-    total_rows = len(all_rows)
+    total_rows = len(filtered_rows)
     max_pages = max(0, (total_rows - 1) // rows_per_page)
+
     if current_page > max_pages:
         current_page = max_pages
 
-    # Calculate pagination slice
+    # ---------------- FILTER SECTION ----------------
+    filter_frame = tk.Frame(content_frame, bg=BG_MAIN)
+    filter_frame.pack(fill="x", padx=30, pady=(20, 5))
+
+    tk.Label(
+        filter_frame,
+        text="Filter:",
+        font=("Segoe UI", 10, "bold"),
+        bg=BG_MAIN
+    ).pack(side="left", padx=(0, 10))
+    filter_column_var = tk.StringVar(
+        value=APP_STATE.get("filter_column") or ""
+    )
+
+
+    column_dropdown = ttk.Combobox(
+        filter_frame,
+        textvariable=filter_column_var,
+        values=columns,
+        state="readonly",
+        width=20
+    )
+    column_dropdown.pack(side="left", padx=5)
+
+    filter_value_var = tk.StringVar(
+        value=APP_STATE.get("filter_value") or ""
+    )
+    filter_entry = ttk.Entry(filter_frame, textvariable=filter_value_var, width=25)
+    filter_entry.pack(side="left", padx=5)
+
+    # 🔥 LIVE FILTER BIND
+    def apply_filter_live(*args):
+        selected_col = filter_column_var.get().strip()
+        search_val = filter_value_var.get().strip()
+
+        # If nothing selected → do nothing
+        if not selected_col:
+            return
+
+        # If search box empty → reset filter
+        if search_val == "":
+            APP_STATE["filter_column"] = None
+            APP_STATE["filter_value"] = None
+            APP_STATE["current_page"] = 0
+            show_page_data(preserve_state=True)
+            return
+
+        APP_STATE["filter_column"] = selected_col
+        APP_STATE["filter_value"] = search_val
+        APP_STATE["current_page"] = 0
+
+        show_page_data(preserve_state=True)
+
+
+    filter_value_var.trace_add("write", apply_filter_live)
+
+    # ---------------- FILTER LOGIC ----------------
+    
+    def clear_filter():
+        global all_rows, current_page
+        filter_value_var.set("")
+        all_rows = list(original_rows)
+        current_page = 0
+        show_page_data(preserve_state=True)
+        APP_STATE["filter_column"] = None
+        APP_STATE["filter_value"] = None
+        APP_STATE["current_page"] = 0
+
+        show_page_data(preserve_state=True)
+    
+
+    tk.Button(
+        filter_frame,
+        text="Clear",
+        bg="#e74c3c",
+        fg="white",
+        relief="flat",
+        cursor="hand2",
+        command=clear_filter
+    ).pack(side="left", padx=5)
+
+    
+
+    total_rows = len(filtered_rows)
     start = current_page * rows_per_page
     end = start + rows_per_page
-    rows = all_rows[start:end]
-
-    # Clear content_frame
-    for widget in content_frame.winfo_children():
-        widget.destroy()
-    
-    content_frame.configure(bg=BG_MAIN)
-
-    # !!! CRITICAL FIX !!!
-    # Prevent the frame from expanding to fit wide tables. 
-    # This keeps your Sidebar visible regardless of column count.
-
-    # --- HEADER ---
+    rows = filtered_rows[start:end]
+    # ---------------- HEADER ----------------
     header_frame = tk.Frame(content_frame, bg=BG_MAIN)
-    header_frame.pack(fill="x", padx=30, pady=(20, 10))
-    
+    header_frame.pack(fill="x", padx=30, pady=(5, 10))
+
     tk.Label(
-        header_frame, 
-        text=f"Network Data Logs", 
+        header_frame,
+        text="Network Data Logs",
         font=("Segoe UI", 18, "bold"),
-        fg=TEXT_COLOR, bg=BG_MAIN
+        fg=TEXT_COLOR,
+        bg=BG_MAIN
     ).pack(side="left")
 
-    # --- TABLE CONTAINER ---
-    table_container = tk.Frame(content_frame, bg=CARD_BG, highlightbackground="#dcdde1", highlightthickness=1)
+    # ---------------- TABLE CONTAINER ----------------
+    table_container = tk.Frame(
+        content_frame,
+        bg=CARD_BG,
+        highlightbackground="#dcdde1",
+        highlightthickness=1
+    )
     table_container.pack(fill="both", expand=True, padx=30, pady=10)
 
-    # --- STYLE ---
     style = ttk.Style()
     style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
     style.configure("Treeview", rowheight=32, font=("Segoe UI", 10))
@@ -2975,16 +3136,20 @@ def show_page_data(preserve_state=True):
     if not rows:
         no_data_frame = tk.Frame(table_container, bg=CARD_BG)
         no_data_frame.pack(expand=True)
-        tk.Label(no_data_frame, text="No Data Available", font=("Segoe UI", 12), fg="gray", bg=CARD_BG).pack()
+        tk.Label(
+            no_data_frame,
+            text="No Data Available",
+            font=("Segoe UI", 12),
+            fg="gray",
+            bg=CARD_BG
+        ).pack()
     else:
-        # !!! SCROLLBAR LOGIC !!!
-        # Adding both Vertical and Horizontal scrollbars
         v_scroll = ttk.Scrollbar(table_container, orient="vertical")
         h_scroll = ttk.Scrollbar(table_container, orient="horizontal")
 
         tree = ttk.Treeview(
-            table_container, 
-            columns=columns, 
+            table_container,
+            columns=columns,
             show='headings',
             yscrollcommand=v_scroll.set,
             xscrollcommand=h_scroll.set
@@ -2993,57 +3158,125 @@ def show_page_data(preserve_state=True):
         v_scroll.config(command=tree.yview)
         h_scroll.config(command=tree.xview)
 
-        # Layout: Scrollbars must be packed first or side-by-side carefully
         v_scroll.pack(side="right", fill="y")
         h_scroll.pack(side="bottom", fill="x")
         tree.pack(side="left", fill="both", expand=True)
 
+        
         for col in columns:
-            tree.heading(col, text=f" {col.upper()}")
-            # !!! COLUMN WIDTH FIX !!!
-            # width=150 ensures columns aren't too thin, stretch=False prevents 
-            # them from trying to fill the screen (enabling the horizontal scroll)
+            tree.heading(
+            col,
+            text=f" {col.upper()}",
+            command=lambda c=col: sort_column_data(c)
+                )    
             tree.column(col, anchor="w", width=150, minwidth=100, stretch=False)
 
         tree.tag_configure('oddrow', background='#f9f9f9')
         tree.tag_configure('evenrow', background='white')
 
         for row_index, row in enumerate(rows):
-            processed_row = [cell if cell not in [None, 0, "None"] else '-' for cell in row]
+            processed_row = [
+                cell if cell not in [None, 0, "None"] else '-'
+                for cell in row
+            ]
             tag = 'evenrow' if row_index % 2 == 0 else 'oddrow'
             tree.insert('', 'end', values=processed_row, tags=(tag,))
 
-    # --- PERSISTENT NAVIGATION BAR ---
+    # ---------------- NAVIGATION BAR ----------------
     nav_bar = tk.Frame(content_frame, bg=BG_MAIN)
     nav_bar.pack(fill="x", side="bottom", padx=30, pady=20)
 
     def create_nav_btn(parent, text, cmd, side):
         btn = tk.Button(
-            parent, text=text, command=cmd, 
-            font=("Segoe UI", 9, "bold"), bg=CARD_BG, fg=ACCENT_BLUE,
-            relief="flat", highlightbackground=ACCENT_BLUE, highlightthickness=1,
-            padx=15, pady=5, cursor="hand2"
+            parent,
+            text=text,
+            command=cmd,
+            font=("Segoe UI", 9, "bold"),
+            bg=CARD_BG,
+            fg=ACCENT_BLUE,
+            relief="flat",
+            highlightbackground=ACCENT_BLUE,
+            highlightthickness=1,
+            padx=15,
+            pady=5,
+            cursor="hand2"
         )
         btn.pack(side=side, padx=5)
         return btn
 
-    # Pagination controls
     if end < total_rows:
         create_nav_btn(nav_bar, "Next Page →", next_page, "right")
-    
+
     if current_page > 0:
         create_nav_btn(nav_bar, "← Previous Page", prev_page, "left")
 
-    # State Indicator
     current_range = f"{start + 1}-{min(end, total_rows)}" if total_rows > 0 else "0-0"
+
     tk.Label(
-        nav_bar, 
+        nav_bar,
         text=f"Page {current_page + 1}  |  Showing {current_range} of {total_rows}",
-        font=("Segoe UI", 9), fg="#7f8c8d", bg=BG_MAIN
+        font=("Segoe UI", 9),
+        fg="#7f8c8d",
+        bg=BG_MAIN
     ).pack(side="left", expand=True)
-# ---------------------------------------------------------
-# GLOBAL NAVIGATION FUNCTIONS (Maintain State)
-# ---------------------------------------------------------
+
+
+
+
+def sort_column_data(column_name):
+    global all_rows
+
+    col_index = columns.index(column_name)
+
+    # Toggle sort direction
+    if APP_STATE["sort_column"] == column_name:
+        APP_STATE["sort_reverse"] = not APP_STATE["sort_reverse"]
+    else:
+        APP_STATE["sort_reverse"] = False
+
+    APP_STATE["sort_column"] = column_name
+
+    def sort_key(row):
+        value = row[col_index]
+
+        if value is None:
+            return ""
+
+        value_str = str(value).strip()
+
+        # ---- IP ADDRESS SORT (IPv4 + IPv6 SAFE) ----
+        try:
+            ip_obj = ipaddress.ip_address(value_str)
+            return (ip_obj.version, int(ip_obj))
+        except ValueError:
+            pass
+
+        # ---- NUMBER SORT ----
+        try:
+            return float(value_str)
+        except ValueError:
+            pass
+
+        # ---- DATETIME SORT ----
+        try:
+            return datetime.strptime(value_str, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            pass
+
+        # ---- DEFAULT STRING SORT ----
+        return value_str.lower()
+
+    all_rows.sort(
+        key=sort_key,
+        reverse=APP_STATE["sort_reverse"]
+    )
+
+    APP_STATE["current_page"] = 0
+    show_page_data(preserve_state=True)
+
+
+
+
 def next_page():
     global current_page
     current_page += 1

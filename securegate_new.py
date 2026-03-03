@@ -409,8 +409,7 @@ class SYS_INFO:
             ip_address VARCHAR(45) PRIMARY KEY,
             request_time DATETIME,
             request_count INT DEFAULT 1,
-            is_blocked BOOLEAN DEFAULT 0,
-            is_local BOOLEAN DEFAULT 0
+            is_blocked BOOLEAN DEFAULT 0
             ,block_time DATETIME,country VARCHAR(45)
             ,last_seen DATETIME)
             """)
@@ -419,7 +418,6 @@ class SYS_INFO:
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS request_type (
             port_number SMALLINT UNSIGNED PRIMARY KEY,
-            port_name VARCHAR(50),
             request_count INT DEFAULT 1,               
             request_time DATETIME               
             ,last_seen DATETIME
@@ -440,7 +438,6 @@ class SYS_INFO:
     src_port SMALLINT UNSIGNED,
     dst_port SMALLINT UNSIGNED,
     protocol VARCHAR(10),
-    interface_name VARCHAR(30),
 
     -- Transport details
     tcp_flags VARCHAR(10),
@@ -492,7 +489,6 @@ class SYS_INFO:
 
     honeypot_ips VARCHAR(255) DEFAULT NULL,
 
-    allowed_ports LONGTEXT DEFAULT NULL,
 
     sensitive_folders VARCHAR(255) DEFAULT NULL,
 
@@ -1685,90 +1681,68 @@ class REQUEST:
         self.connection.commit()
 
 
-
     def is_request_suspicious(self):
         try:
-            suspicious_percent = 20
-            minimum_request = 100
 
-            # -------------------------------------------------------
-            # 1. Fetch allowed ports from settings
-            # -------------------------------------------------------
-            self.cursor.execute("SELECT allowed_ports FROM settings LIMIT 1")
-            res = self.cursor.fetchone()
-
-            if not res or not res[0]:
-                print("[ERROR] No allowed ports found in DB.")
-                return False
-
-            # allowed_ports is stored as CSV: "22,80,443"
-            valid_ports = {
-                int(p.strip())
-                for p in res[0].split(",")
-                if p.strip().isdigit()
-            }
-            print("Valid Ports:", valid_ports)
-
-            # -------------------------------------------------------
-            # 2. Get last 1 hour requests
-            # -------------------------------------------------------
             one_hour_ago = datetime.now() - timedelta(hours=1)
 
             self.cursor.execute("""
-                SELECT port, request_time 
-                FROM iprequest 
+                SELECT src_ip, dst_port, protocol
+                FROM iprequest_junction
                 WHERE request_time >= %s
             """, (one_hour_ago,))
 
             logs = self.cursor.fetchall()
 
             if not logs:
-                print("[INFO] No requests found in last 1 hour.")
+                print("[INFO] No recent traffic.")
                 return False
 
             total_requests = len(logs)
-            print(f"Total Requests (1 hour): {total_requests}")
 
-            # -------------------------------------------------------
-            # 3. Ignore detection if traffic too low
-            # -------------------------------------------------------
-            if total_requests <= minimum_request:
-                print("[INFO] Not enough traffic (< minimum threshold).")
+            if total_requests < 100:
                 return False
 
-            # -------------------------------------------------------
-            # 4. Count invalid port requests
-            # -------------------------------------------------------
-            invalid_count = 0
+            ip_port_map = defaultdict(set)
+            ip_protocol_map = defaultdict(set)
 
-            for row in logs:
-                port = int(row[0])  # row[0] = port (tuple index)
-                if port not in valid_ports:
-                    invalid_count += 1
+            for src_ip, dst_port, protocol in logs:
+                if dst_port:
+                    ip_port_map[src_ip].add(dst_port)
+                if protocol:
+                    ip_protocol_map[src_ip].add(protocol)
 
-            print("Invalid Port Requests:", invalid_count)
+            suspicious_ips = []
 
-            # -------------------------------------------------------
-            # 5. Calculate invalid percentage
-            # -------------------------------------------------------
-            percent_invalid = (invalid_count / total_requests) * 100
-            print(f"Invalid %: {percent_invalid:.2f}%")
+            for ip in ip_port_map:
 
-            # -------------------------------------------------------
-            # 6. Compare & return result
-            # -------------------------------------------------------
-            if percent_invalid >= suspicious_percent:
-                print("[ALERT] Suspicious traffic detected!")
-                return True
+                unique_ports = len(ip_port_map[ip])
+                unique_protocols = len(ip_protocol_map[ip])
 
-            return False
+                
+                if unique_protocols > 3:  # Switching protocols abnormally
+                    suspicious_ips.append((ip, "PROTOCOL_SWITCH"))
+
+            # ---- Register Attacks ----
+            for ip, reason in suspicious_ips:
+
+                fingerprint = f"{ip}:{reason}"
+
+                SYS_INFO.upsert_attack(
+                    self.cursor,
+                    attack_type=reason,
+                    src_ip=ip,
+                    fingerprint=fingerprint,
+                    severity="MEDIUM"
+                )
+
+            return len(suspicious_ips) > 0
 
         except Exception as e:
-            log_error("Engine crashed during startup", e)
-            print("[ERROR in suspicious check]:", e)
+            log_error("Anomaly detection error", e)
             return False
 
-
+    
 
     def securegate_response(protocol,limit,time_interval):
         pass        
@@ -1828,14 +1802,14 @@ class IPREQUEST:
             query = """
             INSERT INTO iprequest_junction (
                 request_time,
-                src_ip, dst_ip, src_port, dst_port, protocol, interface_name,
+                src_ip, dst_ip, src_port, dst_port, protocol,
                 tcp_flags, ttl, window_size, seq_num, ack_num,
                 packet_length, payload_size,
                 mac_src, mac_dst, ether_type, ip_flags, fragment_offset,
                 icmp_type, icmp_code, ipv6_flow_label, ipv6_traffic_class
             ) VALUES (
                 %s,%s,%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,%s,
+                %s,%s,%s,%s,
                 %s,%s,
                 %s,%s,%s,%s,%s,
                 %s,%s,%s,%s
@@ -1844,7 +1818,7 @@ class IPREQUEST:
 
             values = (
                 request_time,
-                src_ip, dst_ip, src_port, dst_port, protocol, interface_name,
+                src_ip, dst_ip, src_port, dst_port, protocol, 
                 tcp_flags, ttl, window_size, seq_num, ack_num,
                 packet_length, payload_size,
                 mac_src, mac_dst, ether_type, ip_flags, fragment_offset,
