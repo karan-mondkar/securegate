@@ -10,12 +10,11 @@ import psutil
 from dotenv import load_dotenv
 import os
 import sys
+import traceback
 
-
-
-# ---------------- BASE DIR (EXE SAFE) ----------------
+#current directory of the script 
 def get_runtime_dir():
-    if getattr(sys, "frozen", False):
+    if getattr(sys, "frozen", False):   #help to work as executable as well..
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.abspath(__file__))
 
@@ -28,7 +27,7 @@ if not os.path.exists(ENV_FILE):
 
 load_dotenv(ENV_FILE)
 
-# ---------------- SECUREGATE BASE DIR ----------------
+#  SECUREGATE BASE DIR 
 BASE_DIR = os.getenv("SECUREGATE_BASE_DIR")
 if not BASE_DIR:
     raise RuntimeError("SECUREGATE_BASE_DIR is not set in securegate.env")
@@ -36,10 +35,9 @@ if not BASE_DIR:
 BASE_DIR = os.path.abspath(BASE_DIR)
 os.makedirs(BASE_DIR, exist_ok=True)
 
-# -------------------------------------------------
+
 # GLOBAL CONFIG (SAFE)
-# -------------------------------------------------
-import traceback
+
 
 LOG_FILE = os.path.join(BASE_DIR, "securegate_error.log")
 
@@ -63,7 +61,6 @@ def log_error(message, exc=None):
             f.write("\n")
 
     except Exception:
-        # Never crash the service due to logging failure
         pass
 
 
@@ -89,9 +86,9 @@ SECUREGATE_LOG_COPY_INTERVAL = int(
     os.getenv("SECUREGATE_LOG_COPY_INTERVAL", "3")
 )
 
-# -------------------------------------------------
+# 
 # INTERFACE
-# -------------------------------------------------
+# 
 iface_name = INTERFACE_NAME
 
 def choose_interface():
@@ -105,18 +102,16 @@ def choose_interface():
         print(f"  {i}: {iface_name}")
 
 
-choose_interface()
+#choose_interface()
 
 last_run = 0
 
-# -------------------------------------------------
 # ENSURE LOG FILES EXIST (GLOBAL VALUES)
-# -------------------------------------------------
 
 import os
 
-# 2️⃣ Define paths and ensure files exist
-# (Assuming these variables are defined in your CONFIG section)
+#  Define paths and ensure files exist
+# 
 LOG_FILES = [
     SECUREGATE_LOG_FILE_STAGE1,
     SECUREGATE_LOG_FILE_STAGE2,
@@ -128,16 +123,17 @@ for log_file in LOG_FILES:
     if not os.path.exists(log_path):
         with open(log_path, "a") as f:
             f.close()
-        print(f"📄 Created log file: {log_file}")
+        print(f" Created log file: {log_file}")
 
 
 def safe(data, key, default="N/A"):
     return str(data.get(key, default)).strip()
 
 
-# -------------------------------------------------
+# 
 # QUEUE SIZE (GLOBAL VALUE)
-# -------------------------------------------------
+# 
+
 request_queue = queue.Queue(maxsize=SECUREGATE_PACKET_QUEUE_SIZE)
 
 def logfile(data):
@@ -159,7 +155,7 @@ def logfile(data):
 
     request_queue.put(request)
 
-    # ---------------- PROCESS QUEUE ----------------
+    #                PROCESS QUEUE 
     while not request_queue.empty():
         a = request_queue.get()
         try:
@@ -169,7 +165,7 @@ def logfile(data):
                 f1.write(json.dumps(a) + "\n")
                 portalocker.unlock(f1)
 
-            # Important log (correct place)
+            # Important log 
             with open(important_file, "a") as f2:
                 f2.write(json.dumps(a) + "\n")
 
@@ -177,7 +173,7 @@ def logfile(data):
             log_error("File lock error", e)
             request_queue.put(a)
 
-    # ---------------- COPY INTERVAL ----------------
+    #                    COPY INTERVAL  
     if current_time - last_run >= SECUREGATE_LOG_COPY_INTERVAL:
         last_run = current_time
 

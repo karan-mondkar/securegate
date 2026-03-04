@@ -21,10 +21,9 @@ import socket
 
 
 
-# ==================================================
-# SecureGate GUI – Environment Loader (SAFE)
-# ==================================================
-
+#
+# SecureGate GUI – Environment Loader 
+#
 import os
 from dotenv import load_dotenv
 
@@ -33,21 +32,21 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 ENV_FILE = os.path.join(BASE_DIR, "securegate.env")
 
-# Load .env with override (CRITICAL)
+# Load .env with override 
 load_dotenv(ENV_FILE, override=True)
 
-# -------------------------------
+# 
 # DATABASE CONFIG
-# -------------------------------
+# 
 SECUREGATE_DB_HOST = os.getenv("SECUREGATE_DB_HOST", "localhost")
 SECUREGATE_DB_PORT = int(os.getenv("SECUREGATE_DB_PORT", "3306"))
 SECUREGATE_DB_USER = os.getenv("SECUREGATE_DB_USER", "root")
 SECUREGATE_DB_PASS = os.getenv("SECUREGATE_DB_PASS", "")
 SECUREGATE_DB_NAME = os.getenv("SECUREGATE_DB_NAME", "securegate")
 
-# -------------------------------
+# =
 # GUI CONFIG
-# -------------------------------
+# 
 SECUREGATE_GUI_REFRESH_INTERVAL = int(
     os.getenv("SECUREGATE_GUI_REFRESH_INTERVAL", "10")
 )
@@ -68,9 +67,9 @@ SECUREGATE_GUI_ICON = os.getenv(
     "SECUREGATE_GUI_ICON", "securegate_image.ico"
 )
 
-# -------------------------------
+# 
 # NETWORK / API CONFIG
-# -------------------------------
+# 
 SECUREGATE_GEOIP_API = os.getenv(
     "SECUREGATE_GEOIP_API", "http://ip-api.com/json"
 )
@@ -96,7 +95,8 @@ import re
 
 all_rows = []
 columns = []
-original_rows = []   # ✅ ADD THIS LINE
+original_rows = []  
+refresh_jobs = []  # List to store job IDs
 # The Global App State
 APP_STATE = {
     "current_view": "dashboard", # Tracks which page the user is on
@@ -114,14 +114,13 @@ APP_STATE = {
 
 
 
-refresh_jobs = []  # List to store job IDs
 def global_refresh_job():
     global refresh_jobs, APP_STATE
     
-    # 1. Clear existing jobs to prevent stacking
+    #  Clear existing jobs to prevent stacking
     clear_all_jobs()
 
-    # 2. Refresh logic based on active view
+    #  Refresh logic based on active view
     current_v = APP_STATE["current_view"]
     
     if current_v == "dashboard":
@@ -190,7 +189,7 @@ from tkinter import filedialog
 def export_alerts_from_db():
    
 
-    # ---------- FETCH DATA ----------
+    #               FETCH DATA  
     conn, cursor = db()
     cursor.execute("""
         SELECT
@@ -212,7 +211,7 @@ def export_alerts_from_db():
         messagebox.showwarning("No Data", "No active security threats found.")
         return
 
-    # ---------- FILE ----------
+    #               FILE 
     file_path = filedialog.asksaveasfilename(
         defaultextension=".pdf",
         filetypes=[("PDF Files", "*.pdf")],
@@ -221,7 +220,7 @@ def export_alerts_from_db():
     if not file_path:
         return
 
-    # ---------- DOCUMENT (LANDSCAPE) ----------
+    #              DOCUMENT (LANDSCAPE)
     doc = SimpleDocTemplate(
         file_path,
         pagesize=landscape(A4),
@@ -238,7 +237,7 @@ def export_alerts_from_db():
         parent=styles["Normal"],
         fontSize=9,
         leading=11,
-        wordWrap="CJK"   # 🔥 CRITICAL
+        wordWrap="CJK"   # 
     )
 
     elements = []
@@ -276,7 +275,7 @@ def export_alerts_from_db():
             Paragraph(r[5].strftime("%Y-%m-%d %H:%M:%S"), cell_style),
         ])
 
-    # ---------- TABLE (FIXED WIDTHS) ----------
+    # ---------- TABLE (FIXED WIDTHS) 
     table = Table(
         table_data,
         repeatRows=1,
@@ -310,7 +309,7 @@ def export_alerts_from_db():
 
     elements.append(table)
 
-    # ---------- BUILD ----------
+    #               BUILD 
     doc.build(elements)
 
     messagebox.showinfo(
@@ -370,7 +369,7 @@ def show_country_heat_chart(parent):
     if not counts:
         return
 
-    # 🔥 Limit to Top 10 max
+    #  Limit to Top 10 max
     countries = countries[:10]
     counts = counts[:10]
 
@@ -401,7 +400,7 @@ def show_country_heat_chart(parent):
     ax.set_yticks(y_positions)
     ax.set_yticklabels(countries, fontsize=9)
 
-    # 🔥 Clean value labels (no overlap)
+    #  Clean value labels (no overlap)
     for i, bar in enumerate(bars):
         width = bar.get_width()
         percent = (width / total_all) * 100
@@ -469,7 +468,7 @@ def validate(username, password):
         cursor.close()
         conn.close()
 
-    # ❌ Username not found
+    #  Username not found
     if not row:
         messagebox.showerror("Login Failed", "Invalid username")
         return
@@ -480,12 +479,12 @@ def validate(username, password):
     if isinstance(stored_hash, str):
         stored_hash = stored_hash.encode("utf-8")
 
-    # ✅ bcrypt verification (THIS IS THE KEY FIX)
+    #  bcrypt verification (THIS IS THE KEY FIX)
     if not bcrypt.checkpw(password.encode("utf-8"), stored_hash):
         messagebox.showerror("Login Failed", "Invalid password")
         return
 
-    # ✅ SUCCESS
+    #  SUCCESS
     validate_user = True
     dashboardshow()
 
@@ -553,7 +552,7 @@ def decrypt_sensitive_file():
         return True
 
     except Exception as e:
-        log_error("Decryption failed", e)
+        #log_error("Decryption failed", e)
         print("[DECRYPT ERROR]", e)
         return False
 
@@ -929,7 +928,7 @@ def handle_network_setting(mode, field, widget=None):
         messagebox.showerror("Database Error", "Unable to connect to database.")
         return
 
-    # ================= SHOW MODE =================
+    #                       SHOW MODE  
     if mode == "show":
         cursor.execute(f"SELECT {field} FROM settings LIMIT 1")
         row = cursor.fetchone()
@@ -940,9 +939,8 @@ def handle_network_setting(mode, field, widget=None):
     # ================= UPDATE MODE =================
     raw_value = widget.get().strip()
 
-    # ============================================================
-    # PATH-BASED SETTINGS VALIDATION (ENTERPRISE LEVEL)
-    # ============================================================
+    # PATH-BASED SETTINGS VALIDATION 
+
     if field in ("sensitive_folders", "remote_upload_directory"):
 
         if not raw_value:
@@ -1008,14 +1006,11 @@ def handle_network_setting(mode, field, widget=None):
         )
         return
 
-    # ============================================================
     # IP-BASED SETTINGS VALIDATION (WHITELIST / BLACKLIST / HONEYPOT)
-    # ============================================================
-
     input_values = [ip.strip() for ip in raw_value.split(",") if ip.strip()]
 
     if not raw_value:
-        # Allow empty configuration (user intentionally disables feature)
+        # Allow empty configuration ( if user intentionally disables feature)
         cursor.execute(f"UPDATE settings SET {field} = NULL")
         conn.commit()
         cursor.close()
@@ -1054,9 +1049,8 @@ def handle_network_setting(mode, field, widget=None):
     # Remove duplicates
     new_entries = list(dict.fromkeys(validated_entries))
 
-    # ============================================================
     # HONEYPOT EXTRA SECURITY CHECKS
-    # ============================================================
+
     if field == "honeypot_ips":
         for entry in new_entries:
             ip_obj = ipaddress.ip_network(entry, strict=False)
@@ -1082,9 +1076,8 @@ def handle_network_setting(mode, field, widget=None):
                 )
                 return
 
-    # ============================================================
     # WHITELIST / BLACKLIST CONFLICT DETECTION
-    # ============================================================
+
     cursor.execute("SELECT whitelisted_ips, blacklisted_ips FROM settings LIMIT 1")
     row = cursor.fetchone()
 
@@ -1112,9 +1105,7 @@ def handle_network_setting(mode, field, widget=None):
         )
         return
 
-    # ============================================================
     # PREVENT SELF LOCKOUT
-    # ============================================================
     try:
         local_ip = socket.gethostbyname(socket.gethostname())
         if field == "blacklisted_ips":
@@ -1127,9 +1118,8 @@ def handle_network_setting(mode, field, widget=None):
     except:
         pass
 
-    # ============================================================
     # SAVE TO DATABASE
-    # ============================================================
+
     cursor.execute(f"SELECT {field} FROM settings LIMIT 1")
     row = cursor.fetchone()
 
@@ -1150,9 +1140,7 @@ def handle_network_setting(mode, field, widget=None):
     cursor.close()
     conn.close()
 
-    # ============================================================
     # USER FEEDBACK
-    # ============================================================
     msg = "Settings updated successfully.\n"
 
     if added:
@@ -1184,7 +1172,7 @@ def reload_settings_ui():
             blacklist_val
         ) = data
 
-        # ✅ SAFE CHECKS USING globals()
+        #  SAFE CHECKS USING globals()
 
         if "new_email" in globals() and new_email:
             new_email.delete(0, "end")
@@ -1372,7 +1360,7 @@ def settingshow(setnum):
             login_card, "Password", is_password=True, fg=ACCENT_DARK, bg=CARD_BG
         )
 
-        # ---------- Forgot Password (NOW PERFECTLY PLACED) ----------
+        # ---------- Forgot Password ----------
         forgot_btn = tk.Label(
             login_card,
             text="Forgot password?",
@@ -1712,8 +1700,8 @@ def settingshow(setnum):
             data = fetch_settings_data()
             if data:
                 # 1. Clear existing data and verify/insert fresh data from DB
-                # Assumption: data tuple indexes match your fetch_settings_data() query
-                # Order: phone[0], email[1], interval[2], limit[3], honey[4], folder[6], white[7], black[8], alerts[9]
+                #  data tuple indexes match your fetch_settings_data() query
+                #  phone[0], email[1], interval[2], limit[3], honey[4], folder[6], white[7], black[8], alerts[9]
                 
                 mapping = [
                     (new_email, data[0])
@@ -1856,7 +1844,7 @@ def forgot_password():
             
 
             entry.delete(0, "end")
-            entry.pack(fill="x", pady=8)   # 👈 SHOW INPUT NOW
+            entry.pack(fill="x", pady=8)   #  SHOW INPUT NOW
 
             action_btn.config(text="VERIFY OTP")
             step["value"] = 2
@@ -2465,9 +2453,9 @@ def dashboardshow():
     ALERT_RED = "#e74c3c"
     ACCENT_COLOR = "#2c3e50"
 
-    # =================================================================
+    # 
     # 1. FIXED SCROLLBAR ARCHITECTURE
-    # =================================================================
+    # 
     
     # Outer container to hold canvas + scrollbar
     container = tk.Frame(content_frame, bg=BG_MAIN)
@@ -2488,7 +2476,7 @@ def dashboardshow():
     # Place frame inside canvas
     window_id = canvas.create_window((0, 0), window=scrollable_dashboard, anchor="nw")
 
-    # 🔥 CRITICAL FIX: This forces the dashboard to stay full-width
+    #  CRITICAL FIX: This forces the dashboard to stay full-width
     def on_canvas_configure(event):
         canvas.itemconfig(window_id, width=event.width)
 
@@ -2499,9 +2487,9 @@ def dashboardshow():
     scrollbar.pack(side="right", fill="y")
     canvas.pack(side="left", fill="both", expand=True)
 
-    # =================================================================
+    #
     # 2. DASHBOARD CONTENT (Using 'scrollable_dashboard' as parent)
-    # =================================================================
+    # 
 
     # ---------------- HEADER ----------------
     header_frame = tk.Frame(scrollable_dashboard, bg=BG_MAIN)
@@ -2588,7 +2576,7 @@ def show_bar_chart_by_country_integrated(parent):
         name = str(country).strip() if country and str(country).strip() != "" else "Unknown"
         unblocked_counts[name] += 1
 
-    # 🔥 FIX: Define all_countries here so the loop below can find it
+    #   Define all_countries here so the loop below can find it
     all_countries = sorted(list(set(blocked_counts.keys()) | set(unblocked_counts.keys())))
 
     if not all_countries:
@@ -2652,7 +2640,7 @@ def datamanage(page):
         "Logs": "iprequest_junction",
         "Port Monitor": "request_type",
         "Protocol Monitor": "network_protocol",
-        "blocked IP": "ip" # We filter this in the query usually
+        "blocked IP": "ip" 
     }
     return mapping.get(page, page)
 
@@ -2895,7 +2883,7 @@ root.grid_columnconfigure(1, weight=1)
 sidebar = tk.Frame(root, width=180, bg="#2c3e50")
 sidebar.grid(row=0, column=0, sticky="ns")
 
-sidebar.grid_propagate(False)  # 🔒 lock sidebar width
+sidebar.grid_propagate(False)  #  lock sidebar width
 
 content_frame = tk.Frame(root, bg="white")
 content_frame.grid(row=0, column=1, sticky="nsew")
@@ -3051,7 +3039,7 @@ def show_page_data(preserve_state=True):
     filter_entry = ttk.Entry(filter_frame, textvariable=filter_value_var, width=25)
     filter_entry.pack(side="left", padx=5)
 
-    # 🔥 LIVE FILTER BIND
+    #  LIVE FILTER BIND
     def apply_filter_live(*args):
         selected_col = filter_column_var.get().strip()
         search_val = filter_value_var.get().strip()

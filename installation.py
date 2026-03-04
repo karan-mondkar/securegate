@@ -7,9 +7,9 @@ import importlib.util
 import platform
 from dotenv import load_dotenv
 
-# ==================================================
+# 
 # CONFIG
-# ==================================================
+# 
 import os
 import time
 import traceback
@@ -78,9 +78,9 @@ import datetime
 
 ENV_FILE = os.path.join(BASE_DIR, "securegate.env")
 
-# ==================================================
+# 
 # ENV CONFIG (INSTALLER-ONLY)
-# ==================================================
+# 
 
 REQUIRED_ENV = {
     "SECUREGATE_NETWORK_MONITOR":"False" ,
@@ -181,8 +181,8 @@ def create_env_file_once():
 
             f.write(f"{k}={v}\n")
 
-    print("✅ securegate.env created")
-    print("⚠️  Review the file and re-run installer")
+    print(" securegate.env created")
+    print("  Review the file and re-run installer")
     
 def validate_env_file_or_exit():
     load_dotenv(ENV_FILE)
@@ -222,9 +222,9 @@ def ensure_env_ready():
     confirm_env_or_exit()
 
 
-# ==================================================
+# 
 # ENV FILE REVIEW (USER CONFIRMATION)
-# ==================================================
+#
 
 def open_env_file_for_edit():
     print("\n📝 Opening securegate.env for review/editing...\n")
@@ -249,18 +249,18 @@ def confirm_env_or_exit():
         print("👉 Fix securegate.env and re-run installer.\n")
         sys.exit(0)
 
-    # 🔁 RELOAD ENV AFTER USER MODIFICATION (CRITICAL FIX)
+    #  RELOAD ENV AFTER USER MODIFICATION (CRITICAL FIX)
     load_dotenv(ENV_FILE, override=True)
 
-    # 🔍 Re-validate with UPDATED values
+    #  Re-validate with UPDATED values
     validate_env_file_or_exit()
 
     print("✔ Configuration confirmed and reloaded\n")
 
 
-# ==================================================
+# 
 # DEPENDENCY CHECK
-# ==================================================
+# 
 
 LIBRARIES = {
     "mysql.connector": "mysql-connector-python",
@@ -278,8 +278,7 @@ LIBRARIES = {
 import os
 import sys
 
-# Force the working directory to the script's actual location
-
+# Forcing the working directory to the script's actual location
 
 
 def module_installed(name):
@@ -307,9 +306,9 @@ def ensure_dependencies():
             install_package(pkg)
     print("\n✔ All dependencies ready\n")
 
-# ==================================================
 # DOWNLOAD FILES
-# ==================================================
+
+
 
 FILES = {
     "gui.py": "https://raw.githubusercontent.com/karan-mondkar/securegate/main/gui.py",
@@ -337,14 +336,11 @@ def download_files():
             print(f"❌ Failed to download {name}")
             sys.exit(1)
 
-# ==================================================
 # MYSQL CHECK
-# ==================================================
 import mysql.connector
 import time
-# ==================================================
-# UNICODE FIX (ADD THIS)
-# ==================================================
+# UNICODE FIX 
+
 if sys.stdout.encoding != 'utf-8':
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
@@ -369,14 +365,15 @@ def ensure_mysql_ready_or_exit():
     os_name = platform.system()
     print("\n🔍 Checking MySQL availability...\n")
 
-    # 1️⃣ Direct connection test
+    #  Direct connection test
     if can_connect():
         print("✔ MySQL already reachable")
         return
 
-    # ==================================================
-    # 🐧 LINUX
-    # ==================================================
+    
+    #  LINUX
+    
+    
     if os_name == "Linux":
         print("⚠ MySQL not reachable, starting Linux service...\n")
 
@@ -391,9 +388,10 @@ def ensure_mysql_ready_or_exit():
         print("\n❌ MySQL could not be started (Linux)")
         sys.exit(1)
 
-    # ==================================================
+    
     # 🪟 WINDOWS
-    # ==================================================
+
+    
     elif os_name == "Windows":
         print("⚠ MySQL not reachable, starting Windows service...\n")
 
@@ -418,9 +416,10 @@ def ensure_mysql_ready_or_exit():
         print(f"❌ Unsupported OS: {os_name}")
         sys.exit(1)
 
-# ==================================================
+
 # SERVICES
-# ==================================================
+
+
 def create_linux_service(name, script):
     service_path = f"/etc/systemd/system/{name}.service"
 
@@ -483,13 +482,6 @@ def ensure_services():
         # Change the task_run line to this to catch errors:
         #create_windows_service(ENGINE_SERVICE, ENGINE_SCRIPT)
         #create_windows_service(MONITOR_SERVICE, MONITOR_SCRIPT)
-# ==================================================
-# GUI
-# ==================================================
-
-# ==================================================
-# MAIN
-# ==================================================
 
 def main():
     ensure_dependencies()

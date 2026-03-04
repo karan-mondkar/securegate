@@ -34,9 +34,7 @@ counter_temp2=0
 
 
 
-# =========================================
 # SecureGate Global Configuration Loader
-# =========================================
 
 import os
 import sys
@@ -68,10 +66,7 @@ load_dotenv(ENV_FILE)
 
 
 def log_error(message, exc=None):
-    """
-    Appends error message to securegate_error.log.
-    File is created automatically if it does not exist.
-    """
+   
     try:
         LOG_FILE = os.path.join(BASE_DIR, "securegate_error.log")
         with open(LOG_FILE, "a", encoding="utf-8") as f:
@@ -88,12 +83,11 @@ def log_error(message, exc=None):
             f.write("\n")
 
     except Exception:
-        # Never crash the service due to logging failure
+       
         pass
 
-# -------------------------------------------------
 # REQUIRED CONFIG FIELDS + DEFAULTS
-# -------------------------------------------------
+
 REQUIRED_ENV = {
     "SECUREGATE_DB_HOST": "localhost",
     "SECUREGATE_DB_PORT": "3306",
@@ -167,7 +161,6 @@ def validate_env():
     for key in REQUIRED_ENV:
         value = os.getenv(key)
 
-        # ---------- Missing / Empty ----------
         if (value is None or value.strip() == "") and key != "SECUREGATE_DB_PASS":
             errors.append(f"Missing or empty value: {key}")
             continue
@@ -198,11 +191,10 @@ def validate_env():
         for err in errors:
             print(f"   • {err}")
         print("\n Fix securegate.env and restart SecureGate\n")
-        sys.exit(1)   # ✅ MUST EXIT
+        sys.exit(1)   
 
-# -------------------------------------------------
 # MAIN CONFIG LOADER
-# -------------------------------------------------
+
 
 def load_securegate_config():
     global INTERFACE_NAME
@@ -219,14 +211,10 @@ def load_securegate_config():
     global SECUREGATE_GUI_ICON, SECUREGATE_GUI_BANNER, SECUREGATE_GUI_THEME
 
   
-
-    # Step 2: Load env
     load_dotenv(ENV_FILE)
 
-    # Step 3: Validate
     validate_env()
 
-    # Step 4: Assign values
     INTERFACE_NAME = os.getenv("SECUREGATE_INTERFACE")
 
     SECUREGATE_DB_HOST = os.getenv("SECUREGATE_DB_HOST")
@@ -273,9 +261,7 @@ def load_securegate_config():
     SECUREGATE_GUI_BANNER = os.getenv("SECUREGATE_GUI_BANNER")
     SECUREGATE_GUI_THEME = os.getenv("SECUREGATE_GUI_THEME")
 
-    # -------------------------------------------------
     # SUCCESS OUTPUT
-    # -------------------------------------------------
     print("\n SecureGate configuration loaded successfully")
     print(f"   Interface  : {INTERFACE_NAME}")
     print(f"   Database   : {SECUREGATE_DB_NAME}@{SECUREGATE_DB_HOST}")
@@ -301,7 +287,7 @@ def ensure_mysql_ready_or_exit():
     os_name = platform.system()
     print("\n Checking MySQL availability...\n")
 
-    # 1️⃣ Direct connection test
+    # 1 Direct connection test
     if can_connect():
         print("✔ MySQL already reachable")
         return
@@ -324,7 +310,7 @@ def ensure_mysql_ready_or_exit():
         sys.exit(1)
 
     # ==================================================
-    # 🪟 WINDOWS
+    # WINDOWS
     # ==================================================
     elif os_name == "Windows":
         print("⚠ MySQL not reachable, starting Windows service...\n")
@@ -903,7 +889,7 @@ class SYS_INFO:
 
         try:
             # =====================================================
-            # 🔥 PERMANENT BLACKLIST ENFORCEMENT
+            #  PERMANENT BLACKLIST ENFORCEMENT
             # =====================================================
             blacklist = self.ips.blacklist_ip("all") or []
             blacklist = set(blacklist)
@@ -932,7 +918,6 @@ class SYS_INFO:
                     print(f"[BLACKLIST ENFORCE] Blocking {ip}")
                     self.ips.block_ip(ip, 99999)  # practically permanent
 
-            # =====================================================
             # Continue normal suspicious detection
             # =====================================================
 
@@ -1612,7 +1597,7 @@ class IPS:
                 )
                 self.connection.commit()
 
-                # 2️⃣ Ensure IP exists in ip table
+                #  Ensure IP exists in ip table
                 cursor.execute("""
                     INSERT INTO ip (ip_address, request_time, last_seen)
                     VALUES (%s, NOW(), NOW())
@@ -1620,7 +1605,7 @@ class IPS:
                 """, (ip,))
                 self.connection.commit()
 
-                # 3️⃣ Immediately block it
+                #  Immediately block it
                 self.block_ip(ip, manual_block_minutes)
 
                 print(f"[MANUAL BLACKLIST] {ip} added and blocked.")
