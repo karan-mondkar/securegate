@@ -110,6 +110,8 @@ APP_STATE = {
 ,
    "sort_column": None,
     "sort_reverse": False
+    ,
+    "dashboard_chart_index": 0
 }
 
 
@@ -370,18 +372,16 @@ def show_country_heat_chart(parent):
         return
 
     #  Limit to Top 10 max
-    countries = countries[:10]
-    counts = counts[:10]
+    countries = countries[:5]
+    counts = counts[:5]
 
     total_all = sum(counts)
     max_val = max(counts)
 
-    # 🔥 Dynamic height (very important)
+    #  Dynamic height (very important)
     dynamic_height = 0.6 * len(countries)
-    fig_height = max(4, dynamic_height)
-
-    fig, ax = plt.subplots(figsize=(9, fig_height), dpi=110)
-
+    fig_height = max(6, dynamic_height + 1.5)    
+    fig, ax = plt.subplots(figsize=(12, fig_height), dpi=100)
     y_positions = np.arange(len(countries))
 
     # Gradient coloring
@@ -413,15 +413,14 @@ def show_country_heat_chart(parent):
             fontsize=8
         )
 
-    ax.set_xlim(0, max_val * 1.15)
-
+    ax.set_xlim(0, max_val * 1.25)  
     ax.set_xlabel("Total Requests", fontsize=10, fontweight="bold")
     ax.set_title(
-        "Top Attacking Countries – Threat Intelligence Overview",
-        fontsize=12,
-        fontweight="bold",
-        pad=15
-    )
+    "Top Attacking Countries – Threat Intelligence Overview",
+    fontsize=13,
+    fontweight="bold",
+    pad=20
+)
 
     ax.invert_yaxis()
 
@@ -431,22 +430,35 @@ def show_country_heat_chart(parent):
     ax.spines["left"].set_visible(False)
     ax.grid(axis="x", linestyle="--", alpha=0.25)
 
-    fig.tight_layout()
+        # Calculate longest country name
+    max_label_length = max(len(str(c)) for c in countries)
+
+    # Dynamic left margin
+    left_margin = min(0.30, 0.15 + (max_label_length * 0.01))
+
+    plt.subplots_adjust(
+        left=left_margin,
+        right=0.95,
+        top=0.85,
+        bottom=0.20
+    )
+
 
     # Embed in Tkinter
     chart_card = tk.Frame(
-        parent,
-        bg="white",
-        highlightbackground="#dcdde1",
-        highlightthickness=1
-    )
-    chart_card.pack(fill="x", padx=30, pady=10)
+    parent,
+    bg="white",
+    highlightbackground="#dcdde1",
+    highlightthickness=1)
+    chart_card.pack(fill="both", expand=True, padx=30, pady=10)
 
     canvas = FigureCanvasTkAgg(fig, master=chart_card)
     canvas.draw()
-    canvas.get_tk_widget().pack(fill="both", expand=True)
+    widget = canvas.get_tk_widget()
+    widget.pack(fill="both", expand=True)
 
-
+    widget.update_idletasks()
+    widget.config(height=450)
 
 
 def validate(username, password):
@@ -692,7 +704,7 @@ import collections
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 global admin_user, email, admin_pass, time_limit, honeypot_ips,max_requests_per_minute,folder_path, allowed_ports, port_services,form_container,image_container,whitelist,blacklist,email_notify_var
-global interval_var, request_limit_var
+global interval_var, request_limit_var,float_btn
 
 
 def fetch_settings_data():
@@ -785,25 +797,81 @@ def jsonins(tp,data,data2):
     conn.close()
 
 def ins_honey(IP):
-    dt=db()
-    conn=dt[0]
-    cursor=dt[1]
-    query = "SELECT honeypot_ips FROM settings"
-    cursor.execute(query)
-    result = cursor.fetchone()
+    from tkinter import messagebox
+    import ipaddress
 
-    if result and result[0]:
-        # string to list
-        ip_list = result[0].split(",")
-        if IP not in ip_list:
-            ip_list.append(IP)
-        updated_ips = ",".join(ip_list)
-    else:
-        updated_ips = IP
+    try:
+        # ================= VALIDATION =================
+        IP = IP.strip()
 
-    update_query = "UPDATE settings SET honeypot_ips = %s"
-    cursor.execute(update_query, (updated_ips,))
-    conn.commit()
+        if not IP:
+            messagebox.showerror("Invalid Input", "Honeypot IP cannot be empty.")
+            return
+
+        try:
+            ip_obj = ipaddress.ip_address(IP)
+        except ValueError:
+            messagebox.showerror("Invalid IP", "Enter a valid IPv4 or IPv6 address.")
+            return
+
+        # ❌ Block unsafe IPs
+        if ip_obj.is_loopback:
+            messagebox.showerror("Invalid IP", "Loopback (127.0.0.1) not allowed.")
+            return
+
+        if ip_obj.is_multicast:
+            messagebox.showerror("Invalid IP", "Multicast IP not allowed.")
+            return
+
+        # ================= DATABASE =================
+        conn, cursor = db()
+
+        if not conn or not cursor:
+            messagebox.showerror("Database Error", "Failed to connect to database.")
+            return
+
+        cursor.execute("SELECT honeypot_ips FROM settings LIMIT 1")
+        row = cursor.fetchone()
+
+        existing_ip = row[0] if row and row[0] else None
+
+        # ================= SINGLE IP LOGIC =================
+        if existing_ip:
+            if existing_ip == IP:
+                messagebox.showinfo("No Change", "This honeypot IP is already set.")
+                return
+
+            # 🔥 Ask before overwrite
+            confirm = messagebox.askyesno(
+                "Overwrite Honeypot",
+                f"Honeypot already set to: {existing_ip}\n\nReplace with: {IP}?"
+            )
+
+            if not confirm:
+                return
+
+        # ================= UPDATE =================
+        cursor.execute(
+            "UPDATE settings SET honeypot_ips = %s",
+            (IP,)
+        )
+
+        conn.commit()
+
+        messagebox.showinfo(
+            "Success",
+            f"Honeypot IP set to: {IP}"
+        )
+
+    except Exception as e:
+        messagebox.showerror("Error", f"Unexpected error:\n{str(e)}")
+
+    finally:
+        try:
+            cursor.close()
+            conn.close()
+        except:
+            pass
 
 def manage_traffic_rules(action, listbox=None):
     conn, cursor = db()
@@ -2431,195 +2499,409 @@ def toggle_network_monitor():
             bg="#e74c3c",
             activebackground="#c0392b"
         )
-
 def dashboardshow():
-    global APP_STATE, network_monitor_btn, refresh_jobs
+    global APP_STATE, network_monitor_btn, refresh_jobs,float_btn
+    def delete_selected_alert():
+        selected_item = alert_tree.selection()
 
-    # 🔴 Reset state and clear background jobs
+        if not selected_item:
+            messagebox.showwarning("No Selection", "Please select an alert to delete.")
+            return
+
+        values = alert_tree.item(selected_item[0])["values"]
+
+        attack_type = values[0]
+        src_ip = values[1]
+        first_detected = values[2]
+
+        confirm = messagebox.askyesno(
+            "Confirm Delete",
+            f"Delete this threat?\n\n{values}"
+        )
+
+        if not confirm:
+            return
+
+        try:
+            conn, cursor = db()
+
+            # 🔥 IMPORTANT: Use UNIQUE combination
+            cursor.execute("""
+                DELETE FROM attack_state
+                WHERE attack_type=%s AND src_ip=%s AND first_detected=%s
+            """, (attack_type, src_ip, first_detected))
+
+            conn.commit()
+            cursor.close()
+            conn.close()
+
+            # Remove from UI
+            alert_tree.delete(selected_item)
+
+            messagebox.showinfo("Deleted", "Threat removed successfully.")
+
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    float_btn = [None]
+    # Reset state and clear background jobs
     clear_all_jobs()
 
     APP_STATE["current_view"] = "dashboard"
     APP_STATE["current_page"] = 0
     APP_STATE["last_page_name"] = None
+
     sidebar.grid(row=0, column=0, sticky="ns")
 
-    # Clear everything from the main content area
+    # Clear all widgets from content frame
     for widget in content_frame.winfo_children():
         widget.destroy()
 
     # --- THEME COLORS ---
-    BG_MAIN = "#f4f7f6"
-    CARD_BG = "#ffffff"
-    ALERT_RED = "#e74c3c"
+    BG_MAIN      = "#f4f7f6"
+    CARD_BG      = "#ffffff"
+    ALERT_RED    = "#e74c3c"
     ACCENT_COLOR = "#2c3e50"
 
-    # 
-    # 1. FIXED SCROLLBAR ARCHITECTURE
-    # 
-    
-    # Outer container to hold canvas + scrollbar
-    container = tk.Frame(content_frame, bg=BG_MAIN)
-    container.pack(fill="both", expand=True)
+    # ─────────────────────────────────────────────
+    # LAYOUT: Simple full-fill frame (no scrollbar)
+    # ─────────────────────────────────────────────
+    main_frame = tk.Frame(content_frame, bg=BG_MAIN)
+    main_frame.pack(fill="both", expand=True)
 
-    canvas = tk.Canvas(container, bg=BG_MAIN, highlightthickness=0)
-    scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
-    
-    # This is the "inner" frame that will expand to full width
-    scrollable_dashboard = tk.Frame(canvas, bg=BG_MAIN)
-
-    # Update scroll region whenever widgets are added
-    scrollable_dashboard.bind(
-        "<Configure>",
-        lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-    )
-
-    # Place frame inside canvas
-    window_id = canvas.create_window((0, 0), window=scrollable_dashboard, anchor="nw")
-
-    #  CRITICAL FIX: This forces the dashboard to stay full-width
-    def on_canvas_configure(event):
-        canvas.itemconfig(window_id, width=event.width)
-
-    canvas.bind("<Configure>", on_canvas_configure)
-    canvas.configure(yscrollcommand=scrollbar.set)
-
-    # Pack scrollbar and canvas correctly
-    scrollbar.pack(side="right", fill="y")
-    canvas.pack(side="left", fill="both", expand=True)
-
-    #
-    # 2. DASHBOARD CONTENT (Using 'scrollable_dashboard' as parent)
-    # 
-
-    # ---------------- HEADER ----------------
-    header_frame = tk.Frame(scrollable_dashboard, bg=BG_MAIN)
+    # ── HEADER ──────────────────────────────────
+    header_frame = tk.Frame(main_frame, bg=BG_MAIN)
     header_frame.pack(fill="x", padx=30, pady=(20, 10))
 
-    btn_text = "🟢 Network Monitor: ON" if SECUREGATE_NETWORK_MONITOR else "🔴 Network Monitor: OFF"
-    btn_color = "#2ecc71" if SECUREGATE_NETWORK_MONITOR else "#e74c3c"
-    active_color = "#27ae60" if SECUREGATE_NETWORK_MONITOR else "#c0392b"
+    btn_text     = "🟢 Network Monitor: ON"  if SECUREGATE_NETWORK_MONITOR else "🔴 Network Monitor: OFF"
+    btn_color    = "#2ecc71"                  if SECUREGATE_NETWORK_MONITOR else "#e74c3c"
+    active_color = "#27ae60"                  if SECUREGATE_NETWORK_MONITOR else "#c0392b"
 
     network_monitor_btn = tk.Button(
-        header_frame, text=btn_text, font=("Segoe UI", 10, "bold"),
-        fg="white", bg=btn_color, activebackground=active_color,
-        relief="flat", cursor="hand2", padx=15, pady=6,
-        command=toggle_network_monitor
+        header_frame,
+        text=btn_text,
+        font=("Segoe UI", 10, "bold"),
+        fg="white",
+        bg=btn_color,
+        activebackground=active_color,
+        relief="flat",
+        cursor="hand2",
+        padx=15, pady=6,
+        command=toggle_network_monitor,
     )
     network_monitor_btn.pack(side="right", padx=10)
 
-    # ---------------- ALERTS SECTION ----------------
+    # ── ALERTS SECTION ──────────────────────────
     alerts_container = tk.LabelFrame(
-        scrollable_dashboard, text=" 🚨 ACTIVE SECURITY THREATS ",
-        font=("Segoe UI", 11, "bold"), fg=ALERT_RED, bg=CARD_BG,
-        padx=15, pady=15, relief="flat", highlightbackground="#dcdde1", highlightthickness=1
+        main_frame,
+        text=" 🚨 ACTIVE SECURITY THREATS ",
+        font=("Segoe UI", 11, "bold"),
+        fg=ALERT_RED,
+        bg=CARD_BG,
+        padx=15, pady=15,
+        relief="flat",
+        highlightbackground="#dcdde1",
+        highlightthickness=1,
     )
     alerts_container.pack(fill="x", padx=30, pady=10)
 
-    # Alert Treeview Logic (Standardized for Scrollable Frame)
     table_frame = tk.Frame(alerts_container, bg=CARD_BG)
     table_frame.pack(fill="x", expand=True)
 
     columns_alert = ("attack_type", "src_ip", "first_detected", "last_detected", "hit_count", "severity")
     
-    alert_tree = ttk.Treeview(table_frame, columns=columns_alert, show="headings", height=5, style="Alert.Treeview")
+    alert_tree = ttk.Treeview(
+    table_frame,
+    columns=columns_alert,
+    show="headings",
+    height=5,
+    selectmode="browse"   
+)
+    style = ttk.Style()
+    style.map("Treeview",
+        background=[("selected", "#3498db")],
+        foreground=[("selected", "white")]
+    )
+    def on_row_click(event):
+        item = alert_tree.identify_row(event.y)
+        if item:
+            alert_tree.selection_set(item)
+
+    alert_tree.bind("<Button-1>", on_row_click)
+    alert_tree.bind("<Double-1>", lambda e: delete_selected_alert())
     alert_tree.pack(fill="x", expand=True, side="left")
+    tk.Button(
+        alerts_container,
+        text="🗑 Delete Selected Threat",
+        bg="#e74c3c",
+        fg="white",
+        font=("Segoe UI", 10, "bold"),
+        relief="flat",
+        command=delete_selected_alert
+    ).pack(anchor="e", pady=5)
+    
+    menu = tk.Menu(alert_tree, tearoff=0)
+    menu.add_command(label="🗑 Delete Threat", command=delete_selected_alert)
+
+    def show_alert_menu(event):
+        row = alert_tree.identify_row(event.y)
+        if row:
+            alert_tree.selection_set(row)
+            menu.post(event.x_root, event.y_root)
+
+    alert_tree.bind("<Button-3>", show_alert_menu)
+
+
+
 
     for col in columns_alert:
         alert_tree.heading(col, text=col.replace("_", " ").title())
         alert_tree.column(col, anchor="center", width=100)
 
-    # Fetch and Insert Rows
+    # Fetch and populate alert rows
     try:
         conn, cur = db()
-        cur.execute("SELECT attack_type, src_ip, first_detected, last_detected, hit_count, severity FROM attack_state WHERE is_active = 1")
+        cur.execute(
+            "SELECT attack_type, src_ip, first_detected, last_detected, hit_count, severity "
+            "FROM attack_state "
+        )
         rows = cur.fetchall()
-        if not rows:
-            alert_tree.destroy()
-            tk.Label(table_frame, text="🛡 No Active Security Threats Detected", font=("Segoe UI", 11, "bold"), bg=CARD_BG, fg="#2ecc71", pady=15).pack()
+        if rows:
+            for row in rows:
+                alert_tree.insert("", "end", values=row)
         else:
-            for r in rows:
-                alert_tree.insert("", "end", values=r)
-        cur.close()
-        conn.close()
-    except:
+            alert_tree.destroy()
+            tk.Label(
+                table_frame,
+                text="🛡 No Active Security Threats Detected",
+                font=("Segoe UI", 11, "bold"),
+                bg=CARD_BG,
+                fg="#2ecc71",
+                pady=15,
+            ).pack()
+    except Exception:
         pass
+    finally:
+        try:
+            cur.close()
+            conn.close()
+        except Exception:
+            pass
 
-    # ---------------- CHARTS SECTION ----------------
-    tk.Label(scrollable_dashboard, text="Geographic Traffic Analysis", 
-             font=("Segoe UI", 14, "bold"), fg=ACCENT_COLOR, bg=BG_MAIN).pack(anchor="w", padx=30, pady=(20, 5))
+    # ── CHART SECTION HEADER ─────────────────────
+    chart_header_frame = tk.Frame(main_frame, bg=BG_MAIN)
+    chart_header_frame.pack(fill="x", padx=30, pady=(20, 5))
 
-    # Pass the scrollable frame to ensure charts don't float outside
-    show_country_heat_chart(scrollable_dashboard)
-    show_bar_chart_by_country_integrated(scrollable_dashboard)
+    tk.Label(
+        chart_header_frame,
+        text="Geographic Traffic Analysis",
+        font=("Segoe UI", 14, "bold"),
+        fg=ACCENT_COLOR,
+        bg=BG_MAIN,
+    ).pack(side="left")
 
-    # ---------------- REFRESH LOGIC ----------------
-    thread = threading.Thread(target=update_null_countries)
-    thread.daemon = True
+    # ── CHART CONTAINER ──────────────────────────
+    chart_wrapper = tk.Frame(main_frame, bg=BG_MAIN)
+    chart_wrapper.pack(fill="both", expand=True, padx=30, pady=(0, 20))
+    chart_wrapper.rowconfigure(0, weight=1)
+    chart_wrapper.columnconfigure(0, weight=1)
+
+    chart_container = tk.Frame(chart_wrapper, bg=BG_MAIN)
+    chart_container.grid(row=0, column=0, sticky="nsew")
+
+    # ── Chart registry ───────────────────────────
+    charts = [
+        ("Heat Map",  lambda: show_country_heat_chart(chart_container)),
+        ("Bar Chart", lambda: show_bar_chart_by_country_integrated(chart_container)),
+    ]
+    charts = [
+    ("Heat Map",  lambda: show_country_heat_chart(chart_container)),
+    ("Bar Chart", lambda: show_bar_chart_by_country_integrated(chart_container)),
+]
+
+    chart_index = [APP_STATE.get("dashboard_chart_index", 0)]
+    float_btn = [None]   # <-- ADD THIS LINE
+
+    def render_chart(index):
+        for widget in chart_container.winfo_children():
+            widget.destroy()
+
+        _name, render_fn = charts[index]
+        render_fn()
+
+        if float_btn[0] is not None:
+            next_name = charts[(index + 1) % len(charts)][0]
+            float_btn[0].config(text=f"📊  {next_name}  →")
+        
+    def on_float_btn_click():
+        chart_index[0] = (chart_index[0] + 1) % len(charts)
+
+        APP_STATE["dashboard_chart_index"] = chart_index[0]
+
+        render_chart(chart_index[0])
+    # Render first chart BEFORE button is created (float_btn[0] is None, guard handles it)
+    render_chart(chart_index[0])    
+    # ── FLOATING CHART NAVIGATOR BUTTON ──────────
+    # Created AFTER render_chart(0) so float_btn[0] is assigned
+    # before any future render_chart() calls update the label.
+    float_btn[0] = tk.Button(
+        content_frame,
+        text=f"📊  {charts[1][0]}  →",
+        font=("Segoe UI", 11, "bold"),
+        fg="white",
+        bg="#2c3e50",
+        activebackground="#1a252f",
+        relief="flat",
+        cursor="hand2",
+        padx=20,
+        pady=10,
+        bd=0,
+        command=on_float_btn_click,
+    )
+
+    def _place_float_btn(event=None):
+        """Re-pin button to bottom-right of content_frame on every resize."""
+        content_frame.update_idletasks()
+        w     = content_frame.winfo_width()
+        h     = content_frame.winfo_height()
+        btn_w = float_btn[0].winfo_reqwidth()
+        btn_h = float_btn[0].winfo_reqheight()
+
+        # 20px margin from right and bottom edges
+        float_btn[0].place(x=w - btn_w - 20, y=h - btn_h - 20)
+        float_btn[0].lift()   # always on top
+
+    content_frame.bind("<Configure>", _place_float_btn)
+    content_frame.after(50, _place_float_btn)  # delay so geometry is ready
+
+    # ── BACKGROUND REFRESH ───────────────────────
+    thread = threading.Thread(target=update_null_countries, daemon=True)
     thread.start()
 
     job_id = root.after(SECUREGATE_GUI_REFRESH_INTERVAL * 1000, dashboardshow)
     refresh_jobs.append(job_id)
-
 def show_bar_chart_by_country_integrated(parent):
-    # 1. Fetch data from database
-    blocked = fetch_ips("blocked") or []
+    # ── 1. Fetch data ────────────────────────────
+    blocked   = fetch_ips("blocked")   or []
     unblocked = fetch_ips("unblocked") or []
 
-    # 2. Process data into counts
-    blocked_counts = collections.defaultdict(int)
-    for ip, country in blocked:
-        name = str(country).strip() if country and str(country).strip() != "" else "Unknown"
+    # ── 2. Count by country ──────────────────────
+    blocked_counts   = collections.defaultdict(int)
+    unblocked_counts = collections.defaultdict(int)
+
+    for _ip, country in blocked:
+        name = str(country).strip() if country and str(country).strip() else "Unknown"
         blocked_counts[name] += 1
 
-    unblocked_counts = collections.defaultdict(int)
-    for ip, country in unblocked:
-        name = str(country).strip() if country and str(country).strip() != "" else "Unknown"
+    for _ip, country in unblocked:
+        name = str(country).strip() if country and str(country).strip() else "Unknown"
         unblocked_counts[name] += 1
 
-    #   Define all_countries here so the loop below can find it
-    all_countries = sorted(list(set(blocked_counts.keys()) | set(unblocked_counts.keys())))
+    all_countries = sorted(set(blocked_counts) | set(unblocked_counts))
 
+    # ── 3. Empty state ───────────────────────────
     if not all_countries:
-        tk.Label(parent, text="No Data Available", bg="#f4f7f6").pack(pady=20)
+        tk.Label(
+            parent,
+            text="📭  No geographic data available yet.",
+            font=("Segoe UI", 11),
+            bg="#f4f7f6",
+            fg="#7f8c8d",
+        ).pack(pady=40)
         return
 
-    # --- CHART CARD ---
-    chart_card = tk.Frame(parent, bg="white", highlightbackground="#dcdde1", highlightthickness=1)
-    chart_card.pack(fill="x", padx=30, pady=10)
+    # ── 4. Chart card ────────────────────────────
+    chart_card = tk.Frame(
+        parent,
+        bg="white",
+        highlightbackground="#dcdde1",
+        highlightthickness=1,
+    )
+    chart_card.pack(fill="both", expand=True, padx=30, pady=10)
 
-    fig, ax = plt.subplots(figsize=(10, 4), dpi=100)
-    width = 0.35
-    x = range(len(all_countries))
+    # ── 5. Build chart ───────────────────────────
+    fig, ax = plt.subplots(figsize=(10, 5), dpi=90)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("#f9fafb")
 
-    ax.bar(x, [blocked_counts.get(c, 0) for c in all_countries], width, label='Blocked', color="#e74c3c")
-    ax.bar([i + width for i in x], [unblocked_counts.get(c, 0) for c in all_countries], width, label='Unblocked', color="#2ecc71")
-    
-    ax.set_xticks([i + width / 2 for i in x])
-    ax.set_xticklabels(all_countries, rotation=25, ha='right', fontsize=8)
-    ax.legend()
-    fig.tight_layout()
+    width   = 0.35
+    x_pos   = range(len(all_countries))
+    blocked_vals   = [blocked_counts.get(c, 0)   for c in all_countries]
+    unblocked_vals = [unblocked_counts.get(c, 0) for c in all_countries]
 
+    bars_blocked   = ax.bar(
+        x_pos,
+        blocked_vals,
+        width,
+        label="Blocked",
+        color="#e74c3c",
+        zorder=3,
+    )
+    bars_unblocked = ax.bar(
+        [i + width for i in x_pos],
+        unblocked_vals,
+        width,
+        label="Unblocked",
+        color="#2ecc71",
+        zorder=3,
+    )
+
+    # Value labels on top of each bar
+    for bar in bars_blocked:
+        h = bar.get_height()
+        if h > 0:
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                h + 0.1,
+                str(int(h)),
+                ha="center", va="bottom",
+                fontsize=8, color="#c0392b", fontweight="bold",
+            )
+
+    for bar in bars_unblocked:
+        h = bar.get_height()
+        if h > 0:
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                h + 0.1,
+                str(int(h)),
+                ha="center", va="bottom",
+                fontsize=8, color="#27ae60", fontweight="bold",
+            )
+
+    # ── Axes styling ─────────────────────────────
+    ax.set_xticks([i + width / 2 for i in x_pos])
+    ax.set_xticklabels(all_countries, rotation=30, ha="right", fontsize=9)
+    ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    ax.set_ylabel("Connection Count", fontsize=10, color="#555")
+    ax.set_xlabel("Country", fontsize=10, color="#555")
+    ax.tick_params(axis="y", labelsize=9, colors="#555")
+    ax.tick_params(axis="x", colors="#444")
+
+    # Subtle horizontal grid, no top/right spines
+    ax.yaxis.grid(True, linestyle="--", linewidth=0.6, color="#dde", zorder=0)
+    ax.set_axisbelow(True)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color("#dcdde1")
+    ax.spines["bottom"].set_color("#dcdde1")
+
+    # Legend
+    ax.legend(
+        frameon=True,
+        framealpha=0.9,
+        fontsize=9,
+        loc="upper right",
+    )
+
+    fig.tight_layout(pad=2.0)
+
+    # ── 6. Embed in Tkinter ──────────────────────
     canvas = FigureCanvasTkAgg(fig, master=chart_card)
     canvas.draw()
     canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
 
-    # --- DATA TABLE CARD ---
-    table_frame = tk.Frame(parent, bg="#f4f7f6")
-    table_frame.pack(fill='both', expand=True, padx=30, pady=(10, 20))
-
-    columns = ('country', 'blocked', 'unblocked')
-    tree = ttk.Treeview(table_frame, columns=columns, show='headings', height=10)
-
-    for col in columns:
-        tree.heading(col, text=col.upper())
-        tree.column(col, anchor='center')
-
-    # This loop now works because all_countries is defined above
-    for i, country in enumerate(all_countries):
-        tree.insert('', 'end', values=(country, blocked_counts.get(country, 0), unblocked_counts.get(country, 0)))
-
-    tree.pack(side='left', fill='both', expand=True)
-
+    plt.close(fig)   # prevent matplotlib memory leak
 def connect_db():
     load_dotenv(ENV_FILE, override=True)
 

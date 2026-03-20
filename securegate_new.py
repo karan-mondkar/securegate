@@ -585,21 +585,27 @@ class SYS_INFO:
                     lines = f.readlines()
 
                 for line in lines:
-                    print(line)
-                    counter_temp2+=1
-                    print("counter temp2  ",counter_temp2)
                     print("Processing line:", line.strip())
-                    line = line.strip()
-                    try:
-                        data = json.loads(line)  # Try to parse JSON data
 
+                    line = line.strip()
+
+                    if not line:
+                        continue
+
+                    try:
+                        data = json.loads(line)
                         request_queue.put(data)
 
-                    except Exception as e:
-                        log_error("Engine crashed during startup", e)
-                        print(f"Error parsing line: {line}\nReason: {e}")
-                        remaining_lines.append(line + '\n')  
+                    except json.JSONDecodeError as e:
+                        print(f"[JSON ERROR] {e}")
 
+                        #  CHECK IF LINE IS INCOMPLETE (retry later)
+                        if not line.endswith("}"):
+                            print("[INFO] Incomplete JSON → retrying later")
+                            remaining_lines.append(line + "\n")
+                        else:
+                            print("[DROP] Invalid JSON → discarded")
+                            
                 
                 # After processing, overwrite file with error vale lines
                 with open(log_file_path, "w") as f:
@@ -1112,13 +1118,13 @@ class SYS_INFO:
             flag = pkt["tcp_flags"]
             ip = pkt["src_ip"]
 
-            if flag == "S":
+            if "S" in flag and "A" not in flag:
                 tcp_stats[ip]["syn"] += 1
-            elif flag == "SA":
+            elif "SA" in flag:
                 tcp_stats[ip]["syn_ack"] += 1
-            elif flag in ("A", "PA"):
+            elif "A" in flag:
                 tcp_stats[ip]["ack"] += 1
-            elif flag in ("F", "FA"):
+            elif "F" in flag:
                 tcp_stats[ip]["fin"] += 1
 
         for ip, stats in tcp_stats.items():
@@ -1143,8 +1149,48 @@ class SYS_INFO:
 
         connection.commit()
 
+        # ================= UDP FLOOD =================
+        FLOOD_PACKET_THRESHOLD=50
+        #we will add it later in config file and make it dynamic
+        udp_stats = defaultdict(int)
+
+        for pkt in detection_packets:
+            if pkt["protocol"] != "UDP":
+                continue
+
+            ip = pkt["src_ip"]
+            udp_stats[ip] += 1
+
+        for ip, count in udp_stats.items():
+            if count >= FLOOD_PACKET_THRESHOLD:
+                SYS_INFO.upsert_attack(
+                    cursor,
+                    attack_type="UDP_FLOOD",
+                    src_ip=ip,
+                    fingerprint=f"{ip}:UDP_FLOOD",
+                    severity="HIGH"
+                )
 
 
+        # ================= ICMP FLOOD =================
+        icmp_stats = defaultdict(int)
+
+        for pkt in detection_packets:
+            if pkt["protocol"] != "ICMP":
+                continue
+
+            ip = pkt["src_ip"]
+            icmp_stats[ip] += 1
+
+        for ip, count in icmp_stats.items():
+            if count >= FLOOD_PACKET_THRESHOLD:
+                SYS_INFO.upsert_attack(
+                    cursor,
+                    attack_type="ICMP_FLOOD",
+                    src_ip=ip,
+                    fingerprint=f"{ip}:ICMP_FLOOD",
+                    severity="HIGH"
+                )
 
 
 
